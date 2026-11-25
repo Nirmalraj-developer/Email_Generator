@@ -28,7 +28,7 @@ export class AppController {
     console.log(`🏷️  Server ID:   ${config.serverId}`);
     console.log(`👑  Node Role:   ${this.role.toUpperCase()}`);
     console.log(`💾  Storage:     Chunked Parquet Files [${config.parquet.baseDir}]`);
-    console.log(`⚡  Concurrency: ${config.queue.workerConcurrency} workers`);
+    console.log(`⚡  Mode:        ${config.queue.enableWorker ? `${config.queue.workerConcurrency} concurrent workers` : 'DISPATCHER ONLY (Zero verification work, enqueues to workers)'}`);
     console.log('====================================================');
 
     await this.pipeline.initialize();

@@ -206,6 +206,11 @@ export class PipelineManager {
   }
 
   _startWorker() {
+    if (!config.queue.enableWorker) {
+      console.log('[PipelineManager] Local worker disabled (Dispatcher-Only Mode). Node will only read MongoDB & push jobs.');
+      return;
+    }
+
     if (this.useMemoryQueue) {
       this._startMemoryWorker();
       return;

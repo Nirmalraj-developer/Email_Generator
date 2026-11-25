@@ -66,6 +66,7 @@ export const config = {
   queue: {
     name: 'email-verification-cluster-queue',
     workerConcurrency: parseInt(process.env.WORKER_CONCURRENCY || '60', 10),
+    enableWorker: process.env.ENABLE_LOCAL_WORKER !== 'false' && parseInt(process.env.WORKER_CONCURRENCY || '60', 10) > 0,
     maxRetries: parseInt(process.env.MAX_JOB_RETRIES || '2', 10),
     retryBackoffMs: parseInt(process.env.RETRY_BACKOFF_MS || '1000', 10)
   }
