@@ -110,6 +110,11 @@ export class AppController {
           { upsert: true }
         );
 
+        // Throttle pacing: gives MongoDB breathing room to protect CPU
+        if (config.sourceMongo.batchDelayMs > 0) {
+          await new Promise(r => setTimeout(r, config.sourceMongo.batchDelayMs));
+        }
+
         if (!lastId) break;
       } catch (err) {
         console.error('[Master] Error reading MongoDB batch:', err.message);

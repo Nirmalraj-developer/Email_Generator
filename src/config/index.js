@@ -15,7 +15,8 @@ export const config = {
     peopleCollection: process.env.SOURCE_PEOPLE_COLLECTION || 'es_cont_email',
     checkpointCollection: process.env.DEST_CHECKPOINT_COLLECTION || 'sync_checkpoints',
     checkpointDb: process.env.DEST_MONGODB_DB_NAME || 'email_generator_db',
-    batchSize: parseInt(process.env.SOURCE_BATCH_SIZE || '500', 10)
+    batchSize: parseInt(process.env.SOURCE_BATCH_SIZE || '500', 10),
+    batchDelayMs: parseInt(process.env.SOURCE_BATCH_DELAY_MS || '100', 10)
   },
 
   // PARTITIONED PARQUET DIRECTORY STRUCTURE
