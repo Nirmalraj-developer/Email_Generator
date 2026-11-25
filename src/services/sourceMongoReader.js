@@ -24,6 +24,7 @@ export class SourceMongoReader {
 
     this.client = null;
     this.peopleCol = null;
+    this.idType = null;
   }
 
   /**
@@ -33,6 +34,23 @@ export class SourceMongoReader {
     this.client = new MongoClient(this.uri);
     await this.client.connect();
     this.peopleCol = this.client.db(this.peopleDbName).collection(this.peopleColName);
+
+    // Detect exact BSON type of _id (Long, ObjectId, Number, String)
+    const sample = await this.peopleCol.findOne({}, { projection: { _id: 1 } });
+    if (sample) {
+      if (typeof sample._id === 'object' && Long.isLong(sample._id)) {
+        this.idType = 'Long';
+      } else if (sample._id instanceof ObjectId) {
+        this.idType = 'ObjectId';
+      } else if (typeof sample._id === 'number') {
+        this.idType = 'Number';
+      } else if (typeof sample._id === 'bigint') {
+        this.idType = 'BigInt';
+      } else {
+        this.idType = 'String';
+      }
+      console.log(`[SourceMongoReader] Detected _id BSON type: ${this.idType}`);
+    }
   }
 
   /**
@@ -74,13 +92,18 @@ export class SourceMongoReader {
 
     if (lastId) {
       let queryId = lastId;
-      if (typeof lastId === 'string') {
-        if (/^\d+$/.test(lastId)) {
-          // MongoDB Long (64-bit integer) format
-          queryId = Long.fromString(lastId);
-        } else if (ObjectId.isValid(lastId) && lastId.length === 24) {
-          queryId = new ObjectId(lastId);
+      if (this.idType === 'Long' || (this.idType === null && /^\d+$/.test(String(lastId)))) {
+        try {
+          queryId = Long.fromString(String(lastId));
+        } catch (_) {
+          queryId = lastId;
         }
+      } else if (this.idType === 'ObjectId') {
+        queryId = new ObjectId(String(lastId));
+      } else if (this.idType === 'Number') {
+        queryId = Number(lastId);
+      } else if (this.idType === 'BigInt') {
+        queryId = BigInt(String(lastId));
       }
       query._id = { $gt: queryId };
     }

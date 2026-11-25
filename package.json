@@ -9,7 +9,8 @@
     "monitor": "node src/cli/monitor.js",
     "worker": "NODE_ROLE=worker node src/index.js",
     "preflight": "node tests/preFlightTest.js",
-    "test:mongo": "node tests/testMongoConnection.js"
+    "test:mongo": "node tests/testMongoConnection.js",
+    "test:id": "node tests/checkIdType.js"
   },
   "keywords": [],
   "author": "",
