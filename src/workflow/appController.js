@@ -103,6 +103,9 @@ export class AppController {
         lastId = batch.nextLastId;
         totalIngested += batch.records.length;
 
+        // Display live progress in terminal
+        console.log(`[Master:Stream] Ingested ${batch.records.length} contacts | Total Queued: ${totalIngested.toLocaleString()} | Last ID: ${lastId}`);
+
         // Save progress checkpoint
         await this.checkpointCol.updateOne(
           { key: CHECKPOINT_KEY },

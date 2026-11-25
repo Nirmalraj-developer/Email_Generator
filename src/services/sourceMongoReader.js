@@ -7,7 +7,7 @@
  *              - Supports _id cursor pagination for continuous stream (Patch Continue)
  */
 
-import { MongoClient } from 'mongodb';
+import { MongoClient, Long, ObjectId } from 'mongodb';
 import { config } from '../config/index.js';
 
 export class SourceMongoReader {
@@ -73,7 +73,16 @@ export class SourceMongoReader {
     };
 
     if (lastId) {
-      query._id = { $gt: lastId };
+      let queryId = lastId;
+      if (typeof lastId === 'string') {
+        if (/^\d+$/.test(lastId)) {
+          // MongoDB Long (64-bit integer) format
+          queryId = Long.fromString(lastId);
+        } else if (ObjectId.isValid(lastId) && lastId.length === 24) {
+          queryId = new ObjectId(lastId);
+        }
+      }
+      query._id = { $gt: queryId };
     }
 
     const peopleDocs = await this.peopleCol
