@@ -1,0 +1,181 @@
+/**
+ * @file appController.js
+ * @description Cluster-Aware App Controller supporting:
+ *              - Master Mode: Reads MongoDB batches, enqueues to Redis BullMQ, AND runs local worker
+ *              - Worker Mode: Listens to Redis BullMQ only and processes jobs (zero MongoDB reading)
+ *              - Safe Stop & Checkpointing
+ */
+
+import { SourceMongoReader } from '../services/sourceMongoReader.js';
+import { PipelineManager } from '../queue/pipelineManager.js';
+import { MongoClient } from 'mongodb';
+import { config } from '../config/index.js';
+
+export class AppController {
+  constructor() {
+    this.role = config.nodeRole; // 'master' or 'worker'
+    this.pipeline = new PipelineManager({ serverId: config.serverId });
+    this.sourceReader = this.role === 'master' ? new SourceMongoReader() : null;
+    this.checkpointClient = null;
+    this.checkpointCol = null;
+    this.isRunning = false;
+    this.stopRequested = false;
+  }
+
+  async init() {
+    console.log('====================================================');
+    console.log(`🚀 Email Generator & Verification Cluster Node`);
+    console.log(`🏷️  Server ID:   ${config.serverId}`);
+    console.log(`👑  Node Role:   ${this.role.toUpperCase()}`);
+    console.log(`💾  Storage:     Chunked Parquet Files [${config.parquet.baseDir}]`);
+    console.log(`⚡  Concurrency: ${config.queue.workerConcurrency} workers`);
+    console.log('====================================================');
+
+    await this.pipeline.initialize();
+
+    if (this.role === 'master') {
+      await this.sourceReader.connect();
+      
+      // Connect checkpoint collection
+      this.checkpointClient = new MongoClient(config.sourceMongo.uri);
+      await this.checkpointClient.connect();
+      this.checkpointCol = this.checkpointClient
+        .db(config.sourceMongo.checkpointDb)
+        .collection(config.sourceMongo.checkpointCollection);
+    }
+
+    this._setupGracefulShutdown();
+  }
+
+  _setupGracefulShutdown() {
+    const handleShutdown = async (signal) => {
+      if (this.stopRequested) return;
+      this.stopRequested = true;
+      console.log(`\n🛑 [${this.role.toUpperCase()}] Received ${signal}. Initiating safe stop...`);
+      await this.stop();
+      process.exit(0);
+    };
+
+    process.on('SIGINT', () => handleShutdown('SIGINT'));
+    process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+  }
+
+  /**
+   * Run Master Loop: Read Mongo -> Enqueue to Redis -> Work simultaneously
+   */
+  async runMaster({ resumeFromCheckpoint = true, maxRecords = Infinity } = {}) {
+    this.isRunning = true;
+    let lastId = null;
+    let totalIngested = 0;
+
+    const CHECKPOINT_KEY = 'mongo_stream_parquet_checkpoint';
+
+    if (resumeFromCheckpoint) {
+      const saved = await this.checkpointCol.findOne({ key: CHECKPOINT_KEY });
+      if (saved?.lastId) {
+        lastId = saved.lastId;
+        totalIngested = saved.totalIngested || 0;
+        console.log(`[Master:PatchContinue] Resuming from cursor. Ingested so far: ${totalIngested}, Last ID:`, lastId);
+      }
+    }
+
+    console.log('[Master] Ingesting from MongoDB and distributing to cluster workers...');
+
+    while (this.isRunning && !this.stopRequested && totalIngested < maxRecords) {
+      try {
+        // Backpressure check: If Redis queue backlog is large (> 25,000 jobs), wait briefly before adding more
+        const qStatus = await this.pipeline.getStatus();
+        if (qStatus.queueStatus.waiting > 25000) {
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+
+        const batch = await this.sourceReader.fetchBatch(lastId);
+
+        if (!batch.records || batch.records.length === 0) {
+          console.log('[Master] Reached end of matching people collection.');
+          break;
+        }
+
+        // Push to cluster queue
+        await this.pipeline.enqueueContacts(batch.records);
+
+        lastId = batch.nextLastId;
+        totalIngested += batch.records.length;
+
+        // Save progress checkpoint
+        await this.checkpointCol.updateOne(
+          { key: CHECKPOINT_KEY },
+          { $set: { key: CHECKPOINT_KEY, lastId, totalIngested, updatedAt: new Date() } },
+          { upsert: true }
+        );
+
+        if (!lastId) break;
+      } catch (err) {
+        console.error('[Master] Error reading MongoDB batch:', err.message);
+        break;
+      }
+    }
+
+    console.log(`[Master] Ingestion finished (${totalIngested} contacts sent to cluster). Working down active queue...`);
+
+    // Master continues working its own share until queue is fully drained
+    let status = await this.pipeline.getStatus();
+    while ((status.queueStatus.waiting > 0 || status.queueStatus.active > 0) && !this.stopRequested) {
+      console.log(`[Master:Progress] Queue: Waiting=${status.queueStatus.waiting}, Active=${status.queueStatus.active} | Node Stored: Valid=${status.metrics.validFromCache + status.metrics.validFromN2b}, Invalid=${status.metrics.allCachedInvalid + status.metrics.n2bValidatedInvalid}`);
+      await new Promise(r => setTimeout(r, 3000));
+      status = await this.pipeline.getStatus();
+    }
+
+    console.log('✅ [Master] Cluster jobs completed.');
+    this.printSummary(status);
+  }
+
+  /**
+   * Run Worker Loop: Listen to Redis BullMQ only and write Parquet locally
+   */
+  async runWorker() {
+    this.isRunning = true;
+    console.log('[Worker] Connected and listening to Redis BullMQ cluster queue...');
+
+    while (this.isRunning && !this.stopRequested) {
+      const status = await this.pipeline.getStatus();
+      console.log(`[Worker:${config.serverId}] Active=${status.queueStatus.active}, QueueWaiting=${status.queueStatus.waiting} | Valid=${status.metrics.validFromCache + status.metrics.validFromN2b}, Invalid=${status.metrics.allCachedInvalid + status.metrics.n2bValidatedInvalid}`);
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  }
+
+  async run() {
+    if (this.role === 'master') {
+      await this.runMaster();
+    } else {
+      await this.runWorker();
+    }
+  }
+
+  printSummary(status) {
+    console.log('\n================ NODE EXECUTION SUMMARY ================');
+    console.log(`Server ID:                           ${config.serverId}`);
+    console.log(`Role:                                ${this.role.toUpperCase()}`);
+    console.log(`Contacts Evaluated (This Node):     ${status.metrics.contactsReceived}`);
+    console.log(`Candidate Patterns Tested:           ${status.metrics.candidatesGenerated}`);
+    console.log(`Valid Written to Parquet (Cache):    ${status.metrics.validFromCache}`);
+    console.log(`Valid Written to Parquet (N2B):      ${status.metrics.validFromN2b}`);
+    console.log(`Invalid (All 10 Cached Low Score):   ${status.metrics.allCachedInvalid}`);
+    console.log(`Invalid (N2B Validated):             ${status.metrics.n2bValidatedInvalid}`);
+    console.log(`Active Valid Parquet File:           ${status.validParquet?.currentFilePath || 'N/A'}`);
+    console.log(`Active Invalid Parquet File:         ${status.invalidParquet?.currentFilePath || 'N/A'}`);
+    console.log('========================================================\n');
+  }
+
+  async stop() {
+    this.isRunning = false;
+    if (this.sourceReader) {
+      await this.sourceReader.disconnect();
+    }
+    if (this.checkpointClient) {
+      await this.checkpointClient.close();
+    }
+    await this.pipeline.safeStop();
+  }
+}

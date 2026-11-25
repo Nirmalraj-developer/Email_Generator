@@ -1,0 +1,30 @@
+{
+  "name": "email_generator",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node tests/runAllTests.js",
+    "start": "node src/index.js",
+    "monitor": "node src/cli/monitor.js",
+    "worker": "NODE_ROLE=worker node src/index.js",
+    "preflight": "node tests/preFlightTest.js",
+    "test:mongo": "node tests/testMongoConnection.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@elastic/elasticsearch": "^9.5.1",
+    "axios": "^1.21.1",
+    "bullmq": "^6.7.10",
+    "chalk": "^4.1.2",
+    "dotenv": "^18.0.10",
+    "ioredis": "^6.1.0",
+    "mongodb": "^7.9.1",
+    "p-limit": "^7.3.3",
+    "parquetjs-lite": "^0.8.7",
+    "yargs": "^18.2.0"
+  },
+  "type": "module"
+}
