@@ -127,7 +127,9 @@ export class AppController {
     // Master continues working its own share until queue is fully drained
     let status = await this.pipeline.getStatus();
     while ((status.queueStatus.waiting > 0 || status.queueStatus.active > 0) && !this.stopRequested) {
-      console.log(`[Master:Progress] Queue: Waiting=${status.queueStatus.waiting}, Active=${status.queueStatus.active} | Node Stored: Valid=${status.metrics.validFromCache + status.metrics.validFromN2b}, Invalid=${status.metrics.allCachedInvalid + status.metrics.n2bValidatedInvalid}`);
+      const totalValid = (status.metrics.validFromCache || 0) + (status.metrics.webhookValidReceived || 0);
+      const totalInvalid = (status.metrics.allCachedInvalid || 0) + (status.metrics.webhookInvalidReceived || 0);
+      console.log(`[Master:Progress] Queue: Waiting=${status.queueStatus.waiting}, Active=${status.queueStatus.active} | Node Stored: Valid=${totalValid}, Invalid=${totalInvalid}`);
       await new Promise(r => setTimeout(r, 3000));
       status = await this.pipeline.getStatus();
     }
@@ -145,7 +147,9 @@ export class AppController {
 
     while (this.isRunning && !this.stopRequested) {
       const status = await this.pipeline.getStatus();
-      console.log(`[Worker:${config.serverId}] Active=${status.queueStatus.active}, QueueWaiting=${status.queueStatus.waiting} | Valid=${status.metrics.validFromCache + status.metrics.validFromN2b}, Invalid=${status.metrics.allCachedInvalid + status.metrics.n2bValidatedInvalid}`);
+      const totalValid = (status.metrics.validFromCache || 0) + (status.metrics.webhookValidReceived || 0);
+      const totalInvalid = (status.metrics.allCachedInvalid || 0) + (status.metrics.webhookInvalidReceived || 0);
+      console.log(`[Worker:${config.serverId}] Active=${status.queueStatus.active}, QueueWaiting=${status.queueStatus.waiting} | Valid=${totalValid}, Invalid=${totalInvalid}`);
       await new Promise(r => setTimeout(r, 5000));
     }
   }
@@ -164,10 +168,10 @@ export class AppController {
     console.log(`Role:                                ${this.role.toUpperCase()}`);
     console.log(`Contacts Evaluated (This Node):     ${status.metrics.contactsReceived}`);
     console.log(`Candidate Patterns Tested:           ${status.metrics.candidatesGenerated}`);
-    console.log(`Valid Written to Parquet (Cache):    ${status.metrics.validFromCache}`);
-    console.log(`Valid Written to Parquet (N2B):      ${status.metrics.validFromN2b}`);
-    console.log(`Invalid (All 10 Cached Low Score):   ${status.metrics.allCachedInvalid}`);
-    console.log(`Invalid (N2B Validated):             ${status.metrics.n2bValidatedInvalid}`);
+    console.log(`Valid Written to Parquet (Cache):    ${status.metrics.validFromCache || 0}`);
+    console.log(`Valid Written to Parquet (Webhook):  ${status.metrics.webhookValidReceived || 0}`);
+    console.log(`Invalid (All 10 Cached Low Score):   ${status.metrics.allCachedInvalid || 0}`);
+    console.log(`Invalid (Webhook Validated):         ${status.metrics.webhookInvalidReceived || 0}`);
     console.log(`Active Valid Parquet File:           ${status.validParquet?.currentFilePath || 'N/A'}`);
     console.log(`Active Invalid Parquet File:         ${status.invalidParquet?.currentFilePath || 'N/A'}`);
     console.log('========================================================\n');
