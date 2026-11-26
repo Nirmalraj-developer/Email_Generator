@@ -33,6 +33,6 @@ node scripts/exportParquetToJsonPerServer.js ./downloads
 
 echo ""
 echo "=================================================================="
-echo "📊 GENERATING PERSON-LEVEL TALLY REPORT"
+echo "📊 GENERATING PERSON-LEVEL TALLY REPORT DIRECT FROM PARQUET"
 echo "=================================================================="
-node scripts/exportPersonLevelTally.js
+node scripts/exportPersonLevelTallyDirect.js ./downloads
