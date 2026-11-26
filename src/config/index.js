@@ -19,15 +19,15 @@ export const config = {
     batchDelayMs: parseInt(process.env.SOURCE_BATCH_DELAY_MS || '100', 10)
   },
 
-  // PARTITIONED PARQUET DIRECTORY STRUCTURE: 3 CLEAN STAGES
+  // PARTITIONED PARQUET DIRECTORY STRUCTURE: 3 CLEAN STAGES (TUNED FOR 150M SCALE)
   parquet: {
     baseDir: process.env.PARQUET_BASE_DIR || './data',
     validDir: process.env.PARQUET_VALID_DIR || './data/valid',
     webhookTriggersDir: process.env.PARQUET_WEBHOOK_TRIGGERS_DIR || './data/webhook_triggers',
     invalidDir: process.env.PARQUET_INVALID_DIR || './data/invalid',
 
-    minCapacity: parseInt(process.env.PARQUET_MIN_CAPACITY || '10000', 10),
-    maxCapacity: parseInt(process.env.PARQUET_MAX_CAPACITY || '50000', 10)
+    minCapacity: parseInt(process.env.PARQUET_MIN_CAPACITY || '50000', 10),
+    maxCapacity: parseInt(process.env.PARQUET_MAX_CAPACITY || '500000', 10) // 500K rows per file for 150M production scale
   },
 
   // SHARED REDIS CONFIGURATION (Connects all 3 servers)
