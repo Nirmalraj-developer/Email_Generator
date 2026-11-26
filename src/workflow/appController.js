@@ -99,9 +99,12 @@ export class AppController {
         // Batch read with transient error retry
         let batch = null;
         let readAttempts = 0;
+        const remaining = maxRecords - totalIngested;
+        const currentBatchLimit = Math.min(this.sourceReader.batchSize, remaining);
+
         while (readAttempts < MAX_READ_RETRIES && !batch) {
           try {
-            batch = await this.sourceReader.fetchBatch(lastId);
+            batch = await this.sourceReader.fetchBatch(lastId, currentBatchLimit);
           } catch (readErr) {
             readAttempts++;
             console.warn(`[Master] Transient MongoDB read error (attempt ${readAttempts}/${MAX_READ_RETRIES}): ${readErr.message}`);

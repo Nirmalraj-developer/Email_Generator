@@ -89,7 +89,9 @@ export class SourceMongoReader {
    *   batchSize: number
    * }>}
    */
-  async fetchBatch(lastId = null) {
+  async fetchBatch(lastId = null, customLimit = null) {
+    const fetchLimit = (customLimit && customLimit > 0) ? Math.min(this.batchSize, customLimit) : this.batchSize;
+
     // High-speed query: checks website is true (boolean true, or truthy non-empty website)
     const websiteMode = config.sourceMongo.websiteQueryMode || 'true';
     let query;
@@ -99,7 +101,7 @@ export class SourceMongoReader {
       query = {
         $or: [
           { website: true },
-          { website: { $exists: true, $nin: ['', null, false] } }
+          { website: { $gt: '' } }
         ]
       };
     }
@@ -122,6 +124,9 @@ export class SourceMongoReader {
       query._id = { $gt: queryId };
     }
 
+    const startMs = Date.now();
+    console.log(`[SourceMongoReader] Querying MongoDB batch (limit: ${fetchLimit}, lastId: ${lastId || '0'})...`);
+
     const peopleDocs = await this.peopleCol
       .find(query, {
         projection: {
@@ -138,9 +143,11 @@ export class SourceMongoReader {
         }
       })
       .sort({ _id: 1 })
-      .batchSize(this.batchSize)
-      .limit(this.batchSize)
+      .batchSize(fetchLimit)
+      .limit(fetchLimit)
       .toArray();
+
+    console.log(`[SourceMongoReader] Retrieved ${peopleDocs.length} documents from MongoDB in ${Date.now() - startMs}ms`);
 
     if (peopleDocs.length === 0) {
       return { records: [], nextLastId: null, batchSize: 0 };
