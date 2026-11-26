@@ -162,8 +162,11 @@ export class AppController {
   }
 
   async run() {
+    const maxRecords = process.env.MAX_CONTACTS_LIMIT ? parseInt(process.env.MAX_CONTACTS_LIMIT, 10) : Infinity;
+    const resetCheckpoint = process.env.RESET_CHECKPOINT === 'true';
+
     if (this.role === 'master') {
-      await this.runMaster();
+      await this.runMaster({ resumeFromCheckpoint: !resetCheckpoint, maxRecords });
     } else {
       await this.runWorker();
     }
