@@ -109,9 +109,11 @@ export class ChunkedParquetWriter {
       fs.mkdirSync(this.outputDir, { recursive: true });
     }
 
-    // Auto-flush timer to seal files even during low-throughput or idle periods
+    // Only seal on timer if idle for a prolonged period AND exceeds minCapacity
+    // During active processing, let the file fill up to maxCapacity (1,000,000 records)
+    this.minCapacity = options.minCapacity || 100000;
     this.flushTimer = setInterval(() => {
-      if (this.currentCount > 0 && !this.isRotating) {
+      if (this.currentCount >= this.minCapacity && !this.isRotating) {
         this.sealCurrentFile().catch(() => {});
       }
     }, this.flushIntervalMs);

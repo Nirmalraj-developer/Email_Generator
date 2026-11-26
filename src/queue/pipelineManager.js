@@ -481,6 +481,10 @@ export class PipelineManager {
       if (isFirst) {
         await this.validParquetWriter.append(validFound);
         this.metrics.validFromCache++;
+        if (this.redisClient && !this.useMemoryQueue) {
+          this.redisClient.hincrby('cluster:metrics', 'validFromCache', 1).catch(() => {});
+          this.redisClient.hincrby('cluster:metrics', 'totalValid', 1).catch(() => {});
+        }
       }
       return { success: true, scenario: 'VALID_IN_CACHE', email: validFound.email };
     }
@@ -510,6 +514,10 @@ export class PipelineManager {
         createdAt: Date.now()
       });
       this.metrics.allCachedInvalid++;
+      if (this.redisClient && !this.useMemoryQueue) {
+        this.redisClient.hincrby('cluster:metrics', 'allCachedInvalid', 1).catch(() => {});
+        this.redisClient.hincrby('cluster:metrics', 'totalInvalid', 1).catch(() => {});
+      }
       return { success: true, scenario: 'ALL_PATTERNS_CACHED_INVALID' };
     }
 
@@ -530,6 +538,9 @@ export class PipelineManager {
     const firstCandidate = missingCacheCandidates[0];
     console.log(`[Waterfall:${this.serverId}] Person ${id} (${firstName} ${lastName}): Triggering Pattern 1/${missingCacheCandidates.length} -> ${firstCandidate.email}`);
     this.metrics.webhookSubmitted++;
+    if (this.redisClient && !this.useMemoryQueue) {
+      this.redisClient.hincrby('cluster:metrics', 'webhookSubmitted', 1).catch(() => {});
+    }
     const res = await this.webhookClient.submitForValidation(firstCandidate.email);
     const returnedTrackingId = res.trackingId || localTrackingId;
 
@@ -596,6 +607,9 @@ export class PipelineManager {
     console.log(`[Waterfall:${this.serverId}] Person ${personId} (${waterfallState.firstName} ${waterfallState.lastName}): Triggering Pattern ${nextIndex + 1}/${waterfallState.missingCandidates.length} -> ${nextCandidate.email}`);
 
     this.metrics.webhookSubmitted++;
+    if (this.redisClient && !this.useMemoryQueue) {
+      this.redisClient.hincrby('cluster:metrics', 'webhookSubmitted', 1).catch(() => {});
+    }
     const res = await this.webhookClient.submitForValidation(nextCandidate.email);
     const trackingId = res.trackingId || this._generateTrackingId(personId);
 
@@ -678,6 +692,11 @@ export class PipelineManager {
           createdAt: Date.now()
         });
         this.metrics.webhookValidReceived++;
+        if (this.redisClient && !this.useMemoryQueue) {
+          this.redisClient.hincrby('cluster:metrics', 'webhookValidReceived', 1).catch(() => {});
+          this.redisClient.hincrby('cluster:metrics', 'totalValid', 1).catch(() => {});
+          this.redisClient.hincrby('cluster:metrics', 'webhookCallbacksReceived', 1).catch(() => {});
+        }
       } else {
         await this.invalidParquetWriter.append({
           trackingId: trackingId || '',
@@ -726,6 +745,11 @@ export class PipelineManager {
         createdAt: Date.now()
       });
       this.metrics.webhookInvalidReceived++;
+      if (this.redisClient && !this.useMemoryQueue) {
+        this.redisClient.hincrby('cluster:metrics', 'webhookInvalidReceived', 1).catch(() => {});
+        this.redisClient.hincrby('cluster:metrics', 'totalInvalid', 1).catch(() => {});
+        this.redisClient.hincrby('cluster:metrics', 'webhookCallbacksReceived', 1).catch(() => {});
+      }
 
       // WATERFALL ESCALATION:
       // Since this pattern failed, escalate to the next pattern if available!
@@ -812,11 +836,19 @@ export class PipelineManager {
 
   async getStatus() {
     const counts = await this.queue.getJobCounts();
+    let clusterMetrics = null;
+    if (this.redisClient && !this.useMemoryQueue) {
+      try {
+        clusterMetrics = await this.redisClient.hgetall('cluster:metrics');
+      } catch (err) {}
+    }
+
     return {
       serverId: this.serverId,
       isMemoryQueue: this.useMemoryQueue,
       queueStatus: counts,
       metrics: this.metrics,
+      clusterMetrics: clusterMetrics || {},
       validParquet: this.validParquetWriter.getStats(),
       webhookTriggersParquet: this.webhookTriggersParquetWriter.getStats(),
       invalidParquet: this.invalidParquetWriter.getStats()

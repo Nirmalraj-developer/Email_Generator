@@ -110,14 +110,20 @@ async function runDashboard() {
       console.log(`║    Completed: ${chalk.green(String(status.queueStatus.completed).padStart(8))}   Failed:    ${chalk.red(String(status.queueStatus.failed).padStart(8))}                        ║`);
       console.log(chalk.bold.cyan('╠════════════════════════════════════════════════════════════════════════════╣'));
 
-      // Stage 1 Verification Breakdown
-      console.log(`║  ${chalk.bold('VERIFICATION BREAKDOWN (THIS NODE):')}                                      ║`);
-      console.log(`║    Contacts Evaluated:             ${chalk.white(String(status.metrics.contactsReceived).padStart(12))}                    ║`);
-      console.log(`║    Candidate Patterns Tested:      ${chalk.white(String(status.metrics.candidatesGenerated).padStart(12))}                    ║`);
-      console.log(`║    Cache Valid Hits (score >= 90): ${chalk.bold.green(String(status.metrics.validFromCache).padStart(12))}                    ║`);
-      console.log(`║    Webhook Valid Hits:             ${chalk.bold.green(String(status.metrics.webhookValidReceived || 0).padStart(12))}                    ║`);
-      console.log(`║    Invalid (Cached or Bounced):    ${chalk.yellow(String((status.metrics.allCachedInvalid || 0) + (status.metrics.webhookInvalidReceived || 0)).padStart(12))}                    ║`);
-      console.log(`║    Sent to Verify V6 Webhook:      ${chalk.magenta(String(status.metrics.webhookSubmitted).padStart(12))}                    ║`);
+      // Stage 1 Verification Breakdown (Cluster-Wide + This Node)
+      const cm = status.clusterMetrics || {};
+      const clusterValid = Number(cm.totalValid || 0);
+      const clusterInvalid = Number(cm.totalInvalid || 0);
+      const clusterSubmitted = Number(cm.webhookSubmitted || 0);
+      const clusterReceived = Number(cm.webhookCallbacksReceived || 0);
+      const clusterWaitingWebhook = Math.max(0, clusterSubmitted - clusterReceived);
+
+      console.log(`║  ${chalk.bold('CLUSTER TOTAL VERIFICATION TALLY (ACROSS ALL NODES):')}                      ║`);
+      console.log(`║    ✅ Total Valid (Cache + Webhook):   ${chalk.bold.green(String(clusterValid).padStart(12))}                       ║`);
+      console.log(`║    ❌ Total Invalid / Dead Leads:      ${chalk.bold.red(String(clusterInvalid).padStart(12))}                       ║`);
+      console.log(`║    ⏳ Waiting for Webhook Callback:    ${chalk.bold.yellow(String(clusterWaitingWebhook).padStart(12))}                       ║`);
+      console.log(`║    📨 Webhook Triggers Submitted:      ${chalk.magenta(String(clusterSubmitted).padStart(12))}                       ║`);
+      console.log(`║    📬 Webhook Callbacks Received:      ${chalk.cyan(String(clusterReceived).padStart(12))}                       ║`);
       console.log(chalk.bold.cyan('╠════════════════════════════════════════════════════════════════════════════╣'));
 
       // 3-Stage Parquet Storage on Disk
