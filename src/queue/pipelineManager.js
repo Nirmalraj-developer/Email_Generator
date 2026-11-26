@@ -418,10 +418,13 @@ export class PipelineManager {
   async _processContactJob(contact) {
     this.metrics.contactsReceived++;
     const { id, firstName, lastName, website, companyName, companyId } = contact;
-    const domain = extractDomain(website);
+    const domain = extractDomain(website) || '';
     const localTrackingId = this._generateTrackingId(id);
 
     const candidates = generateCandidateEmails(firstName, lastName, website);
+    if (!candidates || candidates.length === 0) {
+      return { success: false, reason: 'NO_CANDIDATES' };
+    }
     this.metrics.candidatesGenerated += candidates.length;
 
     let validFound = null;
