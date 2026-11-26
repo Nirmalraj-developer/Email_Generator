@@ -31,40 +31,7 @@ export class MongoRepository {
     this.client = new MongoClient(this.uri);
     await this.client.connect();
     this.db = this.client.db(this.dbName);
-
-    // Indexes for valid_emails
-    await this.db.collection(this.validColName).createIndex(
-      { email: 1 },
-      { unique: true, background: true }
-    );
-    await this.db.collection(this.validColName).createIndex(
-      { personId: 1 },
-      { background: true }
-    );
-    await this.db.collection(this.validColName).createIndex(
-      { trackingId: 1 },
-      { background: true }
-    );
-
-    // Indexes for invalid_emails (Note: personId is NOT unique here because multiple invalid candidate records or tracking records can exist per user specification)
-    await this.db.collection(this.invalidColName).createIndex(
-      { personId: 1, email: 1 },
-      { unique: true, sparse: true, background: true }
-    );
-    await this.db.collection(this.invalidColName).createIndex(
-      { trackingId: 1 },
-      { background: true }
-    );
-    await this.db.collection(this.invalidColName).createIndex(
-      { status: 1 },
-      { background: true }
-    );
-
-    // Indexes for checkpoints
-    await this.db.collection(this.checkpointColName).createIndex(
-      { key: 1 },
-      { unique: true, background: true }
-    );
+    // Note: No indexing is performed in MongoDB per requirement
   }
 
   /**
