@@ -85,8 +85,8 @@ export class SourceMongoReader {
    * }>}
    */
   async fetchBatch(lastId = null) {
+    // Ultra-fast query: ONLY check website exists and is non-empty
     const query = {
-      first_name: { $exists: true, $nin: ['', null] },
       website: { $exists: true, $nin: ['', null] }
     };
 
