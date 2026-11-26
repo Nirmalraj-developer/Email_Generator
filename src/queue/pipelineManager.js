@@ -525,6 +525,7 @@ export class PipelineManager {
     });
 
     const firstCandidate = missingCacheCandidates[0];
+    console.log(`[Waterfall:${this.serverId}] Person ${id} (${firstName} ${lastName}): Triggering Pattern 1/${missingCacheCandidates.length} -> ${firstCandidate.email}`);
     this.metrics.webhookSubmitted++;
     const res = await this.webhookClient.submitForValidation(firstCandidate.email);
     const returnedTrackingId = res.trackingId || localTrackingId;
@@ -589,6 +590,8 @@ export class PipelineManager {
     waterfallState.currentIndex = nextIndex;
     await this._savePersonWaterfallState(personId, waterfallState);
 
+    console.log(`[Waterfall:${this.serverId}] Person ${personId} (${waterfallState.firstName} ${waterfallState.lastName}): Triggering Pattern ${nextIndex + 1}/${waterfallState.missingCandidates.length} -> ${nextCandidate.email}`);
+
     this.metrics.webhookSubmitted++;
     const res = await this.webhookClient.submitForValidation(nextCandidate.email);
     const trackingId = res.trackingId || this._generateTrackingId(personId);
@@ -638,8 +641,11 @@ export class PipelineManager {
     // Resolve context across cluster (from Redis or local)
     const context = await this._getInFlightTracker(trackingId);
     const personId = context.personId || '';
+    const patternNum = typeof context.patternIndex === 'number' ? context.patternIndex + 1 : 1;
 
     if (isDeliverable && score >= 90) {
+      console.log(`[WebhookCallback] ✅ VALID Pattern ${patternNum} for Person ${personId}: ${email || context.email} (Score: ${score})`);
+
       // Option A: First Valid Wins per personId across the cluster
       const isFirstValid = await this._claimFirstValidForPerson(personId);
 
@@ -693,6 +699,8 @@ export class PipelineManager {
         });
       }
     } else {
+      console.log(`[WebhookCallback] ❌ INVALID Pattern ${patternNum} for Person ${personId}: ${email || context.email} (Score: ${score}, Reason: ${payload.reason || payload.message || 'undeliverable'})`);
+
       await this.invalidParquetWriter.append({
         trackingId: trackingId || '',
         personId: personId,
