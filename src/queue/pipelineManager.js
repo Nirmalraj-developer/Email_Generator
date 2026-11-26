@@ -150,6 +150,8 @@ export class PipelineManager {
     }
 
     try {
+      console.log(`[PipelineManager] Connecting to Redis cluster at ${config.redis.host}:${config.redis.port}...`);
+
       const redisOptions = {
         host: config.redis.host,
         port: config.redis.port,
@@ -158,14 +160,18 @@ export class PipelineManager {
         maxRetriesPerRequest: null,
         enableReadyCheck: false,
         keepAlive: 10000,
-        connectTimeout: 10000,
+        connectTimeout: 5000,
         retryStrategy: (times) => Math.min(times * 100, 3000)
       };
 
       this.redisClient = new IORedis(redisOptions);
       this.redisClient.on('error', () => {});
 
-      const pong = await this.redisClient.ping();
+      const pongPromise = this.redisClient.ping();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Redis connection timed out after 5000ms connecting to ${config.redis.host}:${config.redis.port}`)), 5000)
+      );
+      const pong = await Promise.race([pongPromise, timeoutPromise]);
       if (pong !== 'PONG') throw new Error('Ping failed');
 
       this.queue = new Queue(this.queueName, {
@@ -187,6 +193,13 @@ export class PipelineManager {
         this.redisClient.disconnect(false);
         this.redisClient = null;
       }
+
+      if (config.nodeRole === 'worker') {
+        console.error(`\n❌ [FATAL] Worker node cannot connect to Redis at ${config.redis.host}:${config.redis.port} (${err.message})`);
+        console.error(`   Please check that Server 1 Redis is running (redis-cli ping) and port ${config.redis.port} is reachable.\n`);
+        throw err;
+      }
+
       console.warn(`[PipelineManager] Redis not reachable (${err.message}). Activating In-Memory Fallback Queue.`);
       this.useMemoryQueue = true;
       this.queue = new InMemoryQueue(this.queueName);
@@ -230,6 +243,8 @@ export class PipelineManager {
     this.worker = new Worker(this.queueName, async (job) => {
       return await this._processContactJob(job.data);
     }, workerOptions);
+
+    console.log(`[Worker:${this.serverId}] BullMQ Worker active with ${config.queue.workerConcurrency} concurrent slots. Listening for cluster jobs...`);
 
     this.worker.on('failed', (job, err) => {
       this.metrics.failedJobs++;
