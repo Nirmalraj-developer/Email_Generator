@@ -113,19 +113,21 @@ export class AppController {
           }
         }
 
-        if (!batch.records || batch.records.length === 0) {
+        if (batch.batchSize === 0) {
           console.log('[Master] Reached end of matching people collection.');
           break;
         }
 
-        // Push to cluster queue
-        await this.pipeline.enqueueContacts(batch.records);
+        // Push to cluster queue (skip empty filtered batches while still advancing lastId cursor)
+        if (batch.records && batch.records.length > 0) {
+          await this.pipeline.enqueueContacts(batch.records);
+          totalIngested += batch.records.length;
+        }
 
         lastId = batch.nextLastId;
-        totalIngested += batch.records.length;
 
         // Display live progress in terminal
-        console.log(`[Master:Stream] Ingested ${batch.records.length} contacts | Total Queued: ${totalIngested.toLocaleString()} | Last ID: ${lastId}`);
+        console.log(`[Master:Stream] Ingested ${batch.records.length}/${batch.batchSize} valid-website contacts | Total Queued: ${totalIngested.toLocaleString()} | Last ID: ${lastId}`);
 
         // Save progress checkpoint
         await this.checkpointCol.updateOne(

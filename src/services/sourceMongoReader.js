@@ -92,9 +92,9 @@ export class SourceMongoReader {
   async fetchBatch(lastId = null, customLimit = null) {
     const fetchLimit = (customLimit && customLimit > 0) ? Math.min(this.batchSize, customLimit) : this.batchSize;
 
-    // High-speed indexed query:
-    // With website_1 index ready, if configured, query website: true; otherwise use pure _id index
-    const websiteMode = config.sourceMongo.websiteQueryMode || 'index_website';
+    // Always use pure _id index scan (O(log N), ~15ms) so MongoDB never times out on 188M docs
+    // unless explicitly overridden to a Mongo-side filter.
+    const websiteMode = config.sourceMongo.websiteQueryMode || 'true';
     let query = {};
     if (websiteMode === 'index_website' || websiteMode === 'strict_true') {
       query.website = true;
@@ -150,7 +150,7 @@ export class SourceMongoReader {
     }
 
     // Direct mapping with fallback for domain if website is boolean true
-    const records = peopleDocs.map(person => {
+    const mapped = peopleDocs.map(person => {
       let websiteVal = person.website;
       if (typeof websiteVal !== 'string' || !websiteVal) {
         websiteVal = person.domain || person.company_website || person.website_url || person.company || '';
@@ -161,10 +161,16 @@ export class SourceMongoReader {
         lastName: person.last_name || '',
         companyId: person.company_id ? String(person.company_id) : null,
         companyName: person.company_name || person.company || '',
-        website: String(websiteVal),
+        website: String(websiteVal || '').trim(),
         rawSource: person
       };
     });
+
+    // When SOURCE_WEBSITE_QUERY_MODE=true (or filter_website), only keep contacts that actually have a website & firstName
+    const filterWebsiteOnly = websiteMode === 'true' || websiteMode === 'filter_website' || websiteMode === 'only_website';
+    const records = filterWebsiteOnly
+      ? mapped.filter(r => r.website.length > 0 && r.website.includes('.') && r.firstName.trim().length > 0)
+      : mapped;
 
     const nextLastId = String(peopleDocs[peopleDocs.length - 1]._id);
 
