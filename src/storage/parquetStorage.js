@@ -97,6 +97,7 @@ export class ChunkedParquetWriter {
     this.currentFileIndex = 1;
     this.currentCount = 0;
     this.isRotating = false;
+    this._writeLock = Promise.resolve();
 
     if (!fs.existsSync(this.outputDir)) {
       fs.mkdirSync(this.outputDir, { recursive: true });
@@ -152,25 +153,30 @@ export class ChunkedParquetWriter {
   }
 
   /**
-   * Append a single row to the current Parquet file.
+   * Append a single row to the current Parquet file (thread-safe async serialized).
    *
    * @param {object} row
    */
   async append(row) {
-    while (this.isRotating) {
-      await new Promise(r => setTimeout(r, 10));
-    }
+    const op = async () => {
+      while (this.isRotating) {
+        await new Promise(r => setTimeout(r, 10));
+      }
 
-    if (!this.currentWriter) {
-      await this._initNewFile();
-    }
+      if (!this.currentWriter) {
+        await this._initNewFile();
+      }
 
-    await this.currentWriter.appendRow(row);
-    this.currentCount++;
+      await this.currentWriter.appendRow(row);
+      this.currentCount++;
 
-    if (this.currentCount >= this.maxCapacity) {
-      await this.sealCurrentFile();
-    }
+      if (this.currentCount >= this.maxCapacity) {
+        await this.sealCurrentFile();
+      }
+    };
+
+    this._writeLock = this._writeLock.then(op, op);
+    return this._writeLock;
   }
 
   /**
@@ -191,6 +197,7 @@ export class ChunkedParquetWriter {
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
     }
+    await this._writeLock;
     await this.sealCurrentFile();
   }
 

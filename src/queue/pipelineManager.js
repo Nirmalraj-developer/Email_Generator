@@ -282,6 +282,16 @@ export class PipelineManager {
     return `trk_${personId || 'p'}_${timestamp}_${randomHex}`;
   }
 
+  _addResolvedPersonId(personId) {
+    if (this.resolvedPersonIds.size > 100000) {
+      const it = this.resolvedPersonIds.values();
+      for (let i = 0; i < 20000; i++) {
+        this.resolvedPersonIds.delete(it.next().value);
+      }
+    }
+    this.resolvedPersonIds.add(personId);
+  }
+
   /**
    * Option A: Distributed Atomic Claim for First Valid Email per person
    */
@@ -296,17 +306,17 @@ export class PipelineManager {
       try {
         const acquired = await this.redisClient.set(`person_valid_claimed:${personId}`, '1', 'EX', 86400 * 7, 'NX');
         if (acquired === 'OK') {
-          this.resolvedPersonIds.add(personId);
+          this._addResolvedPersonId(personId);
           return true;
         }
-        this.resolvedPersonIds.add(personId);
+        this._addResolvedPersonId(personId);
         return false;
       } catch (err) {
         // Fallback to local memory lock
       }
     }
 
-    this.resolvedPersonIds.add(personId);
+    this._addResolvedPersonId(personId);
     return true;
   }
 
@@ -314,6 +324,12 @@ export class PipelineManager {
    * Saves in-flight tracking context (in Redis for cluster-wide resolution, or local map)
    */
   async _saveInFlightTracker(trackingId, context) {
+    if (this.localPendingTrackers.size > 100000) {
+      const it = this.localPendingTrackers.keys();
+      for (let i = 0; i < 20000; i++) {
+        this.localPendingTrackers.delete(it.next().value);
+      }
+    }
     this.localPendingTrackers.set(trackingId, context);
     if (this.redisClient && !this.useMemoryQueue) {
       try {

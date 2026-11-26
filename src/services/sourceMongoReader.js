@@ -28,10 +28,15 @@ export class SourceMongoReader {
   }
 
   /**
-   * Connects to Source MongoDB collection (read-only).
+   * Connects to Source MongoDB collection (read-only) with high-throughput connection pooling.
    */
   async connect() {
-    this.client = new MongoClient(this.uri);
+    this.client = new MongoClient(this.uri, {
+      maxPoolSize: 50,
+      minPoolSize: 10,
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 60000
+    });
     await this.client.connect();
     this.peopleCol = this.client.db(this.peopleDbName).collection(this.peopleColName);
 
@@ -85,10 +90,19 @@ export class SourceMongoReader {
    * }>}
    */
   async fetchBatch(lastId = null) {
-    // Ultra-fast query: ONLY check website exists and is non-empty
-    const query = {
-      website: { $exists: true, $nin: ['', null] }
-    };
+    // High-speed query: checks website is true (boolean true, or truthy non-empty website)
+    const websiteMode = config.sourceMongo.websiteQueryMode || 'true';
+    let query;
+    if (websiteMode === 'strict_true') {
+      query = { website: true };
+    } else {
+      query = {
+        $or: [
+          { website: true },
+          { website: { $exists: true, $nin: ['', null, false] } }
+        ]
+      };
+    }
 
     if (lastId) {
       let queryId = lastId;
@@ -117,10 +131,14 @@ export class SourceMongoReader {
           company_id: 1,
           company_name: 1,
           company: 1,
-          website: 1
+          website: 1,
+          domain: 1,
+          company_website: 1,
+          website_url: 1
         }
       })
       .sort({ _id: 1 })
+      .batchSize(this.batchSize)
       .limit(this.batchSize)
       .toArray();
 
@@ -128,16 +146,22 @@ export class SourceMongoReader {
       return { records: [], nextLastId: null, batchSize: 0 };
     }
 
-    // Direct mapping - no extra collection lookup required!
-    const records = peopleDocs.map(person => ({
-      id: String(person._id),
-      firstName: person.first_name || '',
-      lastName: person.last_name || '',
-      companyId: person.company_id ? String(person.company_id) : null,
-      companyName: person.company_name || person.company || '',
-      website: person.website,
-      rawSource: person
-    }));
+    // Direct mapping with fallback for domain if website is boolean true
+    const records = peopleDocs.map(person => {
+      let websiteVal = person.website;
+      if (typeof websiteVal !== 'string' || !websiteVal) {
+        websiteVal = person.domain || person.company_website || person.website_url || person.company || '';
+      }
+      return {
+        id: String(person._id),
+        firstName: person.first_name || '',
+        lastName: person.last_name || '',
+        companyId: person.company_id ? String(person.company_id) : null,
+        companyName: person.company_name || person.company || '',
+        website: String(websiteVal),
+        rawSource: person
+      };
+    });
 
     const nextLastId = String(peopleDocs[peopleDocs.length - 1]._id);
 

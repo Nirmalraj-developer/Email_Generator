@@ -32,7 +32,10 @@ function countErrorLines(logPath) {
 }
 
 async function runDashboard() {
-  const pipeline = new PipelineManager({ serverId: config.serverId });
+  // Ensure dashboard acts strictly as a read-only observer (no extra worker, no port 3000 binding)
+  config.queue.enableWorker = false;
+  config.webhookValidation.isWebhookReceiver = false;
+  const pipeline = new PipelineManager({ serverId: `monitor_${config.serverId}` });
   await pipeline.initialize();
 
   let checkpointCol = null;

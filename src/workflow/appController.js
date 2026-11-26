@@ -80,17 +80,35 @@ export class AppController {
     }
 
     console.log('[Master] Ingesting from MongoDB and distributing to cluster workers...');
+    let batchCounter = 0;
+    const MAX_READ_RETRIES = 5;
 
     while (this.isRunning && !this.stopRequested && totalIngested < maxRecords) {
       try {
-        // Backpressure check: If Redis queue backlog is large (> 25,000 jobs), wait briefly before adding more
-        const qStatus = await this.pipeline.getStatus();
-        if (qStatus.queueStatus.waiting > 25000) {
-          await new Promise(r => setTimeout(r, 2000));
-          continue;
+        // High-Throughput Backpressure check: Check queue backlog every 5 batches (Threshold: 100,000 for 251GB RAM cluster)
+        if (batchCounter % 5 === 0) {
+          const qStatus = await this.pipeline.getStatus();
+          if (qStatus.queueStatus.waiting > 100000) {
+            console.log(`[Master:Backpressure] Queue buffer full (${qStatus.queueStatus.waiting.toLocaleString()} waiting). Pausing ingestion for 2s...`);
+            await new Promise(r => setTimeout(r, 2000));
+            continue;
+          }
         }
+        batchCounter++;
 
-        const batch = await this.sourceReader.fetchBatch(lastId);
+        // Batch read with transient error retry
+        let batch = null;
+        let readAttempts = 0;
+        while (readAttempts < MAX_READ_RETRIES && !batch) {
+          try {
+            batch = await this.sourceReader.fetchBatch(lastId);
+          } catch (readErr) {
+            readAttempts++;
+            console.warn(`[Master] Transient MongoDB read error (attempt ${readAttempts}/${MAX_READ_RETRIES}): ${readErr.message}`);
+            if (readAttempts >= MAX_READ_RETRIES) throw readErr;
+            await new Promise(r => setTimeout(r, 2000));
+          }
+        }
 
         if (!batch.records || batch.records.length === 0) {
           console.log('[Master] Reached end of matching people collection.');
@@ -113,14 +131,14 @@ export class AppController {
           { upsert: true }
         );
 
-        // Throttle pacing: gives MongoDB breathing room to protect CPU
+        // Throttle pacing if specified
         if (config.sourceMongo.batchDelayMs > 0) {
           await new Promise(r => setTimeout(r, config.sourceMongo.batchDelayMs));
         }
 
         if (!lastId) break;
       } catch (err) {
-        console.error('[Master] Error reading MongoDB batch:', err.message);
+        console.error('[Master] Fatal error reading MongoDB batch after retries:', err.message);
         break;
       }
     }

@@ -15,8 +15,9 @@ export const config = {
     peopleCollection: process.env.SOURCE_PEOPLE_COLLECTION || 'es_cont_email',
     checkpointCollection: process.env.DEST_CHECKPOINT_COLLECTION || 'sync_checkpoints',
     checkpointDb: process.env.DEST_MONGODB_DB_NAME || 'email_generator_db',
-    batchSize: parseInt(process.env.SOURCE_BATCH_SIZE || '25000', 10),
-    batchDelayMs: parseInt(process.env.SOURCE_BATCH_DELAY_MS || '0', 10)
+    batchSize: parseInt(process.env.SOURCE_BATCH_SIZE || '10000', 10),
+    batchDelayMs: parseInt(process.env.SOURCE_BATCH_DELAY_MS || '0', 10),
+    websiteQueryMode: process.env.SOURCE_WEBSITE_QUERY_MODE || 'true'
   },
 
   // PARTITIONED PARQUET DIRECTORY STRUCTURE: 3 CLEAN STAGES (TUNED FOR 150M SCALE)
@@ -61,11 +62,11 @@ export const config = {
     serverPort: parseInt(process.env.WEBHOOK_SERVER_PORT || '3000', 10)
   },
 
-  // WORKER TUNING FOR 150M in 5 DAYS
+  // WORKER TUNING FOR 150M TARGET (16-Core / 251GB RAM CLUSTER)
   queue: {
     name: 'email-verification-cluster-queue',
-    workerConcurrency: parseInt(process.env.WORKER_CONCURRENCY || '60', 10),
-    enableWorker: process.env.ENABLE_LOCAL_WORKER !== 'false' && parseInt(process.env.WORKER_CONCURRENCY || '60', 10) > 0,
+    workerConcurrency: parseInt(process.env.WORKER_CONCURRENCY || '120', 10),
+    enableWorker: process.env.ENABLE_LOCAL_WORKER !== 'false' && parseInt(process.env.WORKER_CONCURRENCY || '120', 10) > 0,
     maxRetries: parseInt(process.env.MAX_JOB_RETRIES || '2', 10),
     retryBackoffMs: parseInt(process.env.RETRY_BACKOFF_MS || '1000', 10)
   }
