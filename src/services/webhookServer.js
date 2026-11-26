@@ -46,6 +46,7 @@ export class WebhookReceiverServer {
 
             try {
               const payload = JSON.parse(body || '{}');
+              console.log(`[WebhookServer] Received callback from Verify V6: email=${payload.email || 'N/A'}, deliverable=${payload.isDeliverable}, score=${payload.score ?? 0}`);
               await this.onValidationResult(payload);
             } catch (err) {
               errorLogger.logError('WEBHOOK_PAYLOAD_PARSE_ERROR', err, { body });
