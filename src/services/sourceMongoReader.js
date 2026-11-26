@@ -92,18 +92,14 @@ export class SourceMongoReader {
   async fetchBatch(lastId = null, customLimit = null) {
     const fetchLimit = (customLimit && customLimit > 0) ? Math.min(this.batchSize, customLimit) : this.batchSize;
 
-    // High-speed query: checks website is true (boolean true, or truthy non-empty website)
-    const websiteMode = config.sourceMongo.websiteQueryMode || 'true';
-    let query;
-    if (websiteMode === 'strict_true') {
-      query = { website: true };
-    } else {
-      query = {
-        $or: [
-          { website: true },
-          { website: { $gt: '' } }
-        ]
-      };
+    // High-speed indexed query:
+    // With website_1 index ready, if configured, query website: true; otherwise use pure _id index
+    const websiteMode = config.sourceMongo.websiteQueryMode || 'index_website';
+    let query = {};
+    if (websiteMode === 'index_website' || websiteMode === 'strict_true') {
+      query.website = true;
+    } else if (websiteMode === 'website_exists') {
+      query.website = { $gt: '' };
     }
 
     if (lastId) {
