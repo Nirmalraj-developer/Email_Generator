@@ -109,7 +109,17 @@ export class SourceMongoReader {
     }
 
     const peopleDocs = await this.peopleCol
-      .find(query)
+      .find(query, {
+        projection: {
+          _id: 1,
+          first_name: 1,
+          last_name: 1,
+          company_id: 1,
+          company_name: 1,
+          company: 1,
+          website: 1
+        }
+      })
       .sort({ _id: 1 })
       .limit(this.batchSize)
       .toArray();
