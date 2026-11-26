@@ -18,7 +18,7 @@ import { generateCandidateEmails, extractDomain } from '../services/patternGener
 import { CacheValidationClient } from '../services/cacheValidationClient.js';
 import { WebhookValidationClient } from '../services/webhookValidationClient.js';
 import { WebhookReceiverServer } from '../services/webhookServer.js';
-import { ChunkedParquetWriter, validEmailSchema, invalidEmailSchema } from '../storage/parquetStorage.js';
+import { ChunkedParquetWriter, validEmailSchema, webhookTriggerSchema, invalidEmailSchema } from '../storage/parquetStorage.js';
 import { errorLogger } from '../utils/errorLogger.js';
 
 class InMemoryQueue extends EventEmitter {
@@ -89,30 +89,20 @@ export class PipelineManager {
       serverId: this.serverId
     });
 
-    // 2. Waiting for Webhook V6 Parquet Writer (data/invalid/waiting_webhook_v6/)
-    this.waitingWebhookParquetWriter = new ChunkedParquetWriter({
-      outputDir: config.parquet.waitingWebhookDir,
-      filePrefix: 'waiting_webhook_v6',
-      schema: invalidEmailSchema,
+    // 2. Webhook Triggers Parquet Writer (data/webhook_triggers/) - Log every V6 submission with trackingId
+    this.webhookTriggersParquetWriter = new ChunkedParquetWriter({
+      outputDir: config.parquet.webhookTriggersDir,
+      filePrefix: 'webhook_triggers',
+      schema: webhookTriggerSchema,
       minCapacity: config.parquet.minCapacity,
       maxCapacity: config.parquet.maxCapacity,
       serverId: this.serverId
     });
 
-    // 3. Permanent Invalid Cache Parquet Writer -> INPUT FOR PROCESS 2 (data/invalid/permanent_invalid_cache/)
-    this.permanentInvalidCacheParquetWriter = new ChunkedParquetWriter({
-      outputDir: config.parquet.permanentInvalidCacheDir,
-      filePrefix: 'permanent_invalid_cache',
-      schema: invalidEmailSchema,
-      minCapacity: config.parquet.minCapacity,
-      maxCapacity: config.parquet.maxCapacity,
-      serverId: this.serverId
-    });
-
-    // 4. Failed Permanent Parquet Writer (data/invalid/failed_permanent/)
-    this.failedPermanentParquetWriter = new ChunkedParquetWriter({
-      outputDir: config.parquet.failedPermanentDir,
-      filePrefix: 'failed_permanent',
+    // 3. Invalid Parquet Writer (data/invalid/) - All dead leads, bounces, low scores
+    this.invalidParquetWriter = new ChunkedParquetWriter({
+      outputDir: config.parquet.invalidDir,
+      filePrefix: 'invalid_emails',
       schema: invalidEmailSchema,
       minCapacity: config.parquet.minCapacity,
       maxCapacity: config.parquet.maxCapacity,
@@ -401,11 +391,10 @@ export class PipelineManager {
       return { success: true, scenario: 'VALID_IN_CACHE', email: validFound.email };
     }
 
-    // SCENARIO 2: All 10 patterns found in cache with low score / undeliverable
-    // -> Append directly to data/invalid/permanent_invalid_cache/ (INPUT FOR PROCESS 2)
+    // SCENARIO 2: All 10 patterns found in cache with low score / undeliverable -> data/invalid/
     const allFoundInCacheLowScore = (missingCacheCandidates.length === 0) && (cacheEvaluationResults.length === candidates.length);
     if (allFoundInCacheLowScore) {
-      await this.permanentInvalidCacheParquetWriter.append({
+      await this.invalidParquetWriter.append({
         trackingId: localTrackingId,
         personId: id,
         firstName,
@@ -418,7 +407,6 @@ export class PipelineManager {
         pattern: '',
         status: 'all_patterns_cached_invalid',
         score: 0,
-        inCache: true,
         reason: 'all_10_patterns_found_in_cache_with_low_score_or_undeliverable',
         createdAt: Date.now()
       });
@@ -426,8 +414,8 @@ export class PipelineManager {
       return { success: true, scenario: 'ALL_PATTERNS_CACHED_INVALID' };
     }
 
-    // SCENARIO 3: Missing in cache -> Submit to Verify V6 Webhook API
-    const waitingWebhookRecords = [];
+    // SCENARIO 3: Missing in cache -> Record Webhook Trigger & Submit to Verify V6
+    const triggers = [];
 
     for (const missingCandidate of missingCacheCandidates) {
       if (this.isStopping) break;
@@ -450,7 +438,7 @@ export class PipelineManager {
         submittedAt: Date.now()
       });
 
-      waitingWebhookRecords.push({
+      triggers.push({
         trackingId: returnedTrackingId,
         personId: id,
         firstName,
@@ -459,21 +447,18 @@ export class PipelineManager {
         companyName: companyName || '',
         website,
         domain: missingCandidate.domain,
-        email: missingCandidate.email,
         pattern: missingCandidate.pattern,
-        status: 'waiting_webhook_v6',
-        score: 0,
-        inCache: false,
-        reason: res.message || 'Request accepted for real-time validation',
+        email: missingCandidate.email,
+        status: 'triggered_waiting_callback',
         createdAt: Date.now()
       });
     }
 
-    if (waitingWebhookRecords.length > 0) {
-      await this.waitingWebhookParquetWriter.appendBatch(waitingWebhookRecords);
+    if (triggers.length > 0) {
+      await this.webhookTriggersParquetWriter.appendBatch(triggers);
     }
 
-    return { success: true, scenario: 'SENT_TO_WEBHOOK_VALIDATION', count: waitingWebhookRecords.length };
+    return { success: true, scenario: 'SENT_TO_WEBHOOK_VALIDATION', count: triggers.length };
   }
 
   /**
@@ -517,7 +502,7 @@ export class PipelineManager {
         });
         this.metrics.webhookValidReceived++;
       } else {
-        await this.failedPermanentParquetWriter.append({
+        await this.invalidParquetWriter.append({
           trackingId: trackingId || '',
           personId: personId,
           firstName: context.firstName || '',
@@ -530,13 +515,12 @@ export class PipelineManager {
           pattern: context.pattern || '',
           status: 'secondary_valid_ignored',
           score,
-          inCache: false,
           reason: 'person_already_has_primary_valid_email',
           createdAt: Date.now()
         });
       }
     } else {
-      await this.failedPermanentParquetWriter.append({
+      await this.invalidParquetWriter.append({
         trackingId: trackingId || '',
         personId: personId,
         firstName: context.firstName || '',
@@ -547,9 +531,8 @@ export class PipelineManager {
         domain: context.domain || '',
         email: email || context.email || '',
         pattern: context.pattern || '',
-        status: 'webhook_validated_undeliverable',
+        status: 'undeliverable_via_webhook',
         score,
-        inCache: false,
         reason: payload.reason || payload.message || 'undeliverable_via_webhook',
         createdAt: Date.now()
       });
@@ -591,11 +574,10 @@ export class PipelineManager {
       await this.redisClient.quit().catch(() => {});
     }
 
-    // Flush all 4 partitioned Parquet files
+    // Flush all 3 clean Parquet files
     await this.validParquetWriter.close();
-    await this.waitingWebhookParquetWriter.close();
-    await this.permanentInvalidCacheParquetWriter.close();
-    await this.failedPermanentParquetWriter.close();
+    await this.webhookTriggersParquetWriter.close();
+    await this.invalidParquetWriter.close();
     console.log(`[PipelineManager:${this.serverId}] All Partitioned Parquet files flushed and closed cleanly.`);
   }
 
@@ -607,9 +589,8 @@ export class PipelineManager {
       queueStatus: counts,
       metrics: this.metrics,
       validParquet: this.validParquetWriter.getStats(),
-      waitingWebhookParquet: this.waitingWebhookParquetWriter.getStats(),
-      permanentInvalidCacheParquet: this.permanentInvalidCacheParquetWriter.getStats(),
-      failedPermanentParquet: this.failedPermanentParquetWriter.getStats()
+      webhookTriggersParquet: this.webhookTriggersParquetWriter.getStats(),
+      invalidParquet: this.invalidParquetWriter.getStats()
     };
   }
 }

@@ -19,17 +19,15 @@ export const config = {
     batchDelayMs: parseInt(process.env.SOURCE_BATCH_DELAY_MS || '100', 10)
   },
 
-  // PARTITIONED PARQUET DIRECTORY STRUCTURE
+  // PARTITIONED PARQUET DIRECTORY STRUCTURE: 3 CLEAN STAGES
   parquet: {
     baseDir: process.env.PARQUET_BASE_DIR || './data',
     validDir: process.env.PARQUET_VALID_DIR || './data/valid',
-    waitingWebhookDir: process.env.PARQUET_WAITING_WEBHOOK_DIR || './data/invalid/waiting_webhook_v6',
-    permanentInvalidCacheDir: process.env.PARQUET_PERM_INVALID_DIR || './data/invalid/permanent_invalid_cache',
-    process2CompletedDir: process.env.PARQUET_P2_COMPLETED_DIR || './data/invalid/process2_completed',
-    failedPermanentDir: process.env.PARQUET_FAILED_PERM_DIR || './data/invalid/failed_permanent',
+    webhookTriggersDir: process.env.PARQUET_WEBHOOK_TRIGGERS_DIR || './data/webhook_triggers',
+    invalidDir: process.env.PARQUET_INVALID_DIR || './data/invalid',
 
     minCapacity: parseInt(process.env.PARQUET_MIN_CAPACITY || '10000', 10),
-    maxCapacity: parseInt(process.env.PARQUET_MAX_CAPACITY || '100000', 10) // 100K rows per file
+    maxCapacity: parseInt(process.env.PARQUET_MAX_CAPACITY || '50000', 10)
   },
 
   // SHARED REDIS CONFIGURATION (Connects all 3 servers)

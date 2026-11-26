@@ -27,7 +27,25 @@ export const validEmailSchema = new parquet.ParquetSchema({
 });
 
 /**
- * Parquet Schema for Invalid Emails
+ * Parquet Schema for Webhook Triggers (When submitted to Verify V6)
+ */
+export const webhookTriggerSchema = new parquet.ParquetSchema({
+  trackingId: { type: 'UTF8' },
+  personId: { type: 'UTF8' },
+  firstName: { type: 'UTF8' },
+  lastName: { type: 'UTF8' },
+  companyId: { type: 'UTF8', optional: true },
+  companyName: { type: 'UTF8', optional: true },
+  website: { type: 'UTF8' },
+  domain: { type: 'UTF8' },
+  pattern: { type: 'UTF8' },
+  email: { type: 'UTF8' },
+  status: { type: 'UTF8' }, // 'triggered_waiting_callback'
+  createdAt: { type: 'INT64' }
+});
+
+/**
+ * Parquet Schema for Invalid / Bounced Emails
  */
 export const invalidEmailSchema = new parquet.ParquetSchema({
   trackingId: { type: 'UTF8' },
@@ -40,9 +58,8 @@ export const invalidEmailSchema = new parquet.ParquetSchema({
   domain: { type: 'UTF8' },
   email: { type: 'UTF8', optional: true },
   pattern: { type: 'UTF8', optional: true },
-  status: { type: 'UTF8' }, // 'all_patterns_cached_invalid' | 'n2b_validated_invalid'
+  status: { type: 'UTF8' }, // 'undeliverable_via_webhook' | 'all_patterns_cached_invalid' | 'secondary_valid_ignored'
   score: { type: 'INT32', optional: true },
-  inCache: { type: 'BOOLEAN', optional: true },
   reason: { type: 'UTF8', optional: true },
   createdAt: { type: 'INT64' }
 });
