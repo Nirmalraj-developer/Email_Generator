@@ -246,8 +246,8 @@ export class PipelineManager {
     const workerOptions = {
       connection: workerConnection,
       concurrency: config.queue.workerConcurrency,
-      lockDuration: 30000,
-      stalledInterval: 15000,
+      lockDuration: 60000,
+      stalledInterval: 30000,
       maxStalledCount: 2
     };
 
@@ -259,6 +259,10 @@ export class PipelineManager {
     }, workerOptions);
 
     console.log(`[Worker:${this.serverId}] BullMQ Worker active with ${config.queue.workerConcurrency} concurrent slots. Listening for cluster jobs...`);
+
+    this.worker.on('error', (err) => {
+      errorLogger.logError('WORKER_ERROR', err);
+    });
 
     this.worker.on('failed', (job, err) => {
       this.metrics.failedJobs++;
