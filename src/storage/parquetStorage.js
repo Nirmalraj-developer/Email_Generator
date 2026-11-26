@@ -48,29 +48,35 @@ export const invalidEmailSchema = new parquet.ParquetSchema({
 });
 
 /**
- * Thread-safe, rotating chunked Parquet Writer
- * Automatically creates new files when row count reaches maxCapacity.
+ * Production Thread-safe Rotating Parquet Writer
+ * 
+ * DESIGN FEATURES:
+ * 1. Writes active data to a `.tmp` file first.
+ * 2. Auto-seals & atomically renames to `.parquet` every `flushIntervalMs` OR every `maxCapacity` rows.
+ * 3. Any `.parquet` file in the folder is 100% COMPLETE, SEALED, and readable at all times (even while the server is running).
+ * 4. Never leaves 0-byte or unsealed `.parquet` files on disk.
  */
 export class ChunkedParquetWriter {
   /**
    * @param {object} options
-   * @param {string} options.outputDir   - Base directory for files (e.g. data/valid)
-   * @param {string} options.filePrefix  - Prefix for file name (e.g. 'valid_emails')
+   * @param {string} options.outputDir          - Base directory (e.g. data/valid)
+   * @param {string} options.filePrefix         - Prefix for file name (e.g. 'valid_emails')
    * @param {parquet.ParquetSchema} options.schema - Parquet schema
-   * @param {number} [options.minCapacity=10000]   - Minimum buffer rows before flushing
-   * @param {number} [options.maxCapacity=100000]  - Max rows per parquet file before rotating
-   * @param {string} [options.serverId='worker-1']- Server ID to prevent file naming collisions
+   * @param {number} [options.maxCapacity=10000] - Rows per chunk before auto-sealing (Default: 10K for fast accessibility)
+   * @param {number} [options.flushIntervalMs=30000] - Auto-seal interval if idle (Default: 30s)
+   * @param {string} [options.serverId='worker-1'] - Server ID for collision-free names
    */
   constructor(options = {}) {
     this.outputDir = options.outputDir;
     this.filePrefix = options.filePrefix;
     this.schema = options.schema;
-    this.minCapacity = options.minCapacity || 10000;
-    this.maxCapacity = options.maxCapacity || 100000;
+    this.maxCapacity = options.maxCapacity || 10000;
+    this.flushIntervalMs = options.flushIntervalMs || 30000;
     this.serverId = options.serverId || `srv_${process.pid}`;
 
     this.currentWriter = null;
-    this.currentFilePath = null;
+    this.currentTmpPath = null;
+    this.currentFinalPath = null;
     this.currentFileIndex = 1;
     this.currentCount = 0;
     this.isRotating = false;
@@ -78,18 +84,58 @@ export class ChunkedParquetWriter {
     if (!fs.existsSync(this.outputDir)) {
       fs.mkdirSync(this.outputDir, { recursive: true });
     }
+
+    // Auto-flush timer to seal files even during low-throughput or idle periods
+    this.flushTimer = setInterval(() => {
+      if (this.currentCount > 0 && !this.isRotating) {
+        this.sealCurrentFile().catch(() => {});
+      }
+    }, this.flushIntervalMs);
+    this.flushTimer.unref(); // Won't keep process alive on exit
   }
 
   async _initNewFile() {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const fileName = `${this.filePrefix}_${this.serverId}_part_${this.currentFileIndex}_${timestamp}.parquet`;
-    this.currentFilePath = path.join(this.outputDir, fileName);
-    this.currentWriter = await parquet.ParquetWriter.openFile(this.schema, this.currentFilePath);
+    const baseName = `${this.filePrefix}_${this.serverId}_part_${this.currentFileIndex}_${timestamp}`;
+    this.currentTmpPath = path.join(this.outputDir, `.${baseName}.tmp`);
+    this.currentFinalPath = path.join(this.outputDir, `${baseName}.parquet`);
+    this.currentWriter = await parquet.ParquetWriter.openFile(this.schema, this.currentTmpPath);
     this.currentCount = 0;
   }
 
   /**
-   * Append a single row to the current Parquet file. Rotates if maxCapacity reached.
+   * Seals current file and atomically renames it to .parquet
+   */
+  async sealCurrentFile() {
+    if (this.isRotating || !this.currentWriter || this.currentCount === 0) {
+      if (this.currentWriter && this.currentCount === 0) {
+        // Discard 0-row empty files cleanly
+        await this.currentWriter.close();
+        if (fs.existsSync(this.currentTmpPath)) {
+          fs.unlinkSync(this.currentTmpPath);
+        }
+        this.currentWriter = null;
+      }
+      return;
+    }
+
+    this.isRotating = true;
+    try {
+      await this.currentWriter.close();
+      this.currentWriter = null;
+
+      // Atomically expose completed Parquet file to external tools/SCP
+      if (fs.existsSync(this.currentTmpPath)) {
+        fs.renameSync(this.currentTmpPath, this.currentFinalPath);
+      }
+      this.currentFileIndex++;
+    } finally {
+      this.isRotating = false;
+    }
+  }
+
+  /**
+   * Append a single row to the current Parquet file.
    *
    * @param {object} row
    */
@@ -106,15 +152,7 @@ export class ChunkedParquetWriter {
     this.currentCount++;
 
     if (this.currentCount >= this.maxCapacity) {
-      this.isRotating = true;
-      try {
-        await this.currentWriter.close();
-        this.currentWriter = null;
-        this.currentFileIndex++;
-        await this._initNewFile();
-      } finally {
-        this.isRotating = false;
-      }
+      await this.sealCurrentFile();
     }
   }
 
@@ -133,20 +171,18 @@ export class ChunkedParquetWriter {
    * Closes and flushes current open Parquet file.
    */
   async close() {
-    if (this.currentWriter) {
-      await this.currentWriter.close();
-      this.currentWriter = null;
+    if (this.flushTimer) {
+      clearInterval(this.flushTimer);
     }
+    await this.sealCurrentFile();
   }
 
-  /**
-   * Returns stats about current written rows and active file.
-   */
   getStats() {
     return {
-      currentCount: this.currentCount,
-      currentFileIndex: this.currentFileIndex,
-      currentFilePath: this.currentFilePath
+      outputDir: this.outputDir,
+      currentFilePath: this.currentFinalPath,
+      rowsInCurrentChunk: this.currentCount,
+      chunksCompleted: this.currentFileIndex - 1
     };
   }
 }
