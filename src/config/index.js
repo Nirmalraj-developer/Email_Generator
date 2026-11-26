@@ -27,8 +27,8 @@ export const config = {
     webhookTriggersDir: process.env.PARQUET_WEBHOOK_TRIGGERS_DIR || './data/webhook_triggers',
     invalidDir: process.env.PARQUET_INVALID_DIR || './data/invalid',
 
-    minCapacity: parseInt(process.env.PARQUET_MIN_CAPACITY || '50000', 10),
-    maxCapacity: parseInt(process.env.PARQUET_MAX_CAPACITY || '500000', 10) // 500K rows per file for 150M production scale
+    minCapacity: parseInt(process.env.PARQUET_MIN_CAPACITY || '100000', 10),
+    maxCapacity: parseInt(process.env.PARQUET_MAX_CAPACITY || '1000000', 10) // 1M (1,000,000) rows per file for 150M production scale
   },
 
   // SHARED REDIS CONFIGURATION (Connects all 3 servers)

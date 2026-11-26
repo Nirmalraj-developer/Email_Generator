@@ -85,16 +85,16 @@ export class ChunkedParquetWriter {
    * @param {string} options.outputDir          - Base directory (e.g. data/valid)
    * @param {string} options.filePrefix         - Prefix for file name (e.g. 'valid_emails')
    * @param {parquet.ParquetSchema} options.schema - Parquet schema
-   * @param {number} [options.maxCapacity=10000] - Rows per chunk before auto-sealing (Default: 10K for fast accessibility)
-   * @param {number} [options.flushIntervalMs=30000] - Auto-seal interval if idle (Default: 30s)
+   * @param {number} [options.maxCapacity=1000000] - Rows per chunk before auto-sealing (Default: 1,000,000 for 150M production scale)
+   * @param {number} [options.flushIntervalMs=300000] - Auto-seal interval if idle (Default: 5m)
    * @param {string} [options.serverId='worker-1'] - Server ID for collision-free names
    */
   constructor(options = {}) {
     this.outputDir = options.outputDir;
     this.filePrefix = options.filePrefix;
     this.schema = options.schema;
-    this.maxCapacity = options.maxCapacity || 10000;
-    this.flushIntervalMs = options.flushIntervalMs || 30000;
+    this.maxCapacity = options.maxCapacity || 1000000;
+    this.flushIntervalMs = options.flushIntervalMs || 300000;
     this.serverId = options.serverId || `srv_${process.pid}`;
 
     this.currentWriter = null;
