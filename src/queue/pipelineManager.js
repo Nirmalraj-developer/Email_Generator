@@ -565,19 +565,28 @@ export class PipelineManager {
     }
 
     if (this.worker && typeof this.worker.close === 'function') {
-      await this.worker.close();
+      // Force shutdown within 1.5 seconds so worker doesn't hang waiting for stalled jobs
+      await Promise.race([
+        this.worker.close(),
+        new Promise(r => setTimeout(r, 1500))
+      ]);
     }
     if (this.queue && typeof this.queue.close === 'function') {
-      await this.queue.close();
+      await Promise.race([
+        this.queue.close(),
+        new Promise(r => setTimeout(r, 1000))
+      ]);
     }
     if (this.redisClient) {
-      await this.redisClient.quit().catch(() => {});
+      this.redisClient.disconnect(false);
     }
 
-    // Flush all 3 clean Parquet files
-    await this.validParquetWriter.close();
-    await this.webhookTriggersParquetWriter.close();
-    await this.invalidParquetWriter.close();
+    // Flush all 3 clean Parquet files concurrently
+    await Promise.all([
+      this.validParquetWriter.close(),
+      this.webhookTriggersParquetWriter.close(),
+      this.invalidParquetWriter.close()
+    ]);
     console.log(`[PipelineManager:${this.serverId}] All Partitioned Parquet files flushed and closed cleanly.`);
   }
 
