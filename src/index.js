@@ -8,6 +8,16 @@ async function bootstrap() {
   process.exit(0);
 }
 
+// Handle transient Redis connection drops without crashing
+process.on('uncaughtException', (err) => {
+  if (err && (err.message?.includes('Connection is closed') || err.message?.includes('ECONNRESET'))) {
+    console.warn('[Redis] Transient connection dropout detected, reconnecting automatically...');
+    return;
+  }
+  console.error('Fatal application error:', err);
+  process.exit(1);
+});
+
 bootstrap().catch(err => {
   console.error('Fatal application error:', err);
   process.exit(1);

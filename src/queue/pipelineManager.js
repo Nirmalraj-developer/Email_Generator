@@ -160,21 +160,21 @@ export class PipelineManager {
     }
 
     try {
-      this.redisClient = new IORedis({
+      const redisOptions = {
         host: config.redis.host,
         port: config.redis.port,
-        password: config.redis.password,
-        db: config.redis.db,
+        password: config.redis.password || undefined,
+        db: config.redis.db || 0,
         maxRetriesPerRequest: null,
-        lazyConnect: true,
-        connectTimeout: 2000,
-        enableOfflineQueue: false,
-        retryStrategy: () => null
-      });
+        enableReadyCheck: false,
+        keepAlive: 10000,
+        connectTimeout: 10000,
+        retryStrategy: (times) => Math.min(times * 100, 3000)
+      };
 
+      this.redisClient = new IORedis(redisOptions);
       this.redisClient.on('error', () => {});
 
-      await this.redisClient.connect();
       const pong = await this.redisClient.ping();
       if (pong !== 'PONG') throw new Error('Ping failed');
 
@@ -216,8 +216,21 @@ export class PipelineManager {
       return;
     }
 
+    const workerConnection = new IORedis({
+      host: config.redis.host,
+      port: config.redis.port,
+      password: config.redis.password || undefined,
+      db: config.redis.db || 0,
+      maxRetriesPerRequest: null,
+      enableReadyCheck: false,
+      keepAlive: 10000,
+      connectTimeout: 10000,
+      retryStrategy: (times) => Math.min(times * 100, 3000)
+    });
+    workerConnection.on('error', () => {});
+
     const workerOptions = {
-      connection: this.redisClient.duplicate(),
+      connection: workerConnection,
       concurrency: config.queue.workerConcurrency,
       lockDuration: 30000,
       stalledInterval: 15000,

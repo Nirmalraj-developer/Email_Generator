@@ -149,10 +149,14 @@ export class AppController {
     console.log('[Worker] Connected and listening to Redis BullMQ cluster queue...');
 
     while (this.isRunning && !this.stopRequested) {
-      const status = await this.pipeline.getStatus();
-      const totalValid = (status.metrics.validFromCache || 0) + (status.metrics.webhookValidReceived || 0);
-      const totalInvalid = (status.metrics.allCachedInvalid || 0) + (status.metrics.webhookInvalidReceived || 0);
-      console.log(`[Worker:${config.serverId}] Active=${status.queueStatus.active}, QueueWaiting=${status.queueStatus.waiting} | Valid=${totalValid}, Invalid=${totalInvalid}`);
+      try {
+        const status = await this.pipeline.getStatus();
+        const totalValid = (status.metrics.validFromCache || 0) + (status.metrics.webhookValidReceived || 0);
+        const totalInvalid = (status.metrics.allCachedInvalid || 0) + (status.metrics.webhookInvalidReceived || 0);
+        console.log(`[Worker:${config.serverId}] Active=${status.queueStatus.active}, QueueWaiting=${status.queueStatus.waiting} | Valid=${totalValid}, Invalid=${totalInvalid}`);
+      } catch (err) {
+        // Suppress transient Redis disconnect log during reconnection
+      }
       await new Promise(r => setTimeout(r, 5000));
     }
   }
