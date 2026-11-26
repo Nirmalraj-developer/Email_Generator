@@ -2,7 +2,7 @@ import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
 import { generateCandidateEmails, extractDomain, sanitizeNamePart } from '../src/services/patternGenerator.js';
-import { ChunkedParquetWriter, validEmailSchema, invalidEmailSchema } from '../src/storage/parquetStorage.js';
+import { ChunkedParquetWriter, validEmailSchema, invalidEmailSchema, webhookTriggerSchema } from '../src/storage/parquetStorage.js';
 import { WebhookReceiverServer } from '../src/services/webhookServer.js';
 import { PipelineManager } from '../src/queue/pipelineManager.js';
 import { WebhookValidationClient } from '../src/services/webhookValidationClient.js';
@@ -115,6 +115,81 @@ async function runTests() {
   // Clean test files
   fs.rmSync(baseTestDir, { recursive: true, force: true });
   console.log('  ✓ Option A first-valid-wins verified under webhook callback scenario');
+
+  // Test 5: Waterfall pattern escalation (Pattern 1 invalid -> escalates to Pattern 2)
+  console.log('Test 5: Waterfall escalation (Pattern 1 invalid -> triggers Pattern 2)');
+  const waterfallTestDir = './tests/tmp_waterfall_test';
+  const wfPipeline = new PipelineManager({ serverId: 'wf_test_node' });
+  wfPipeline.useMemoryQueue = true;
+  await wfPipeline.initialize();
+
+  wfPipeline.validParquetWriter = new ChunkedParquetWriter({
+    outputDir: path.join(waterfallTestDir, 'valid'),
+    filePrefix: 'valid_wf',
+    schema: validEmailSchema,
+    serverId: 'node_test'
+  });
+
+  wfPipeline.invalidParquetWriter = new ChunkedParquetWriter({
+    outputDir: path.join(waterfallTestDir, 'invalid'),
+    filePrefix: 'invalid_wf',
+    schema: invalidEmailSchema,
+    serverId: 'node_test'
+  });
+
+  wfPipeline.webhookTriggersParquetWriter = new ChunkedParquetWriter({
+    outputDir: path.join(waterfallTestDir, 'webhook_triggers'),
+    filePrefix: 'triggers_wf',
+    schema: webhookTriggerSchema,
+    serverId: 'node_test'
+  });
+
+  // Mock cache miss for all patterns to force waterfall to trigger
+  wfPipeline.cacheClient.checkCache = async () => ({ foundInCache: false });
+  // Mock webhook client submission
+  let submittedEmails = [];
+  wfPipeline.webhookClient.submitForValidation = async (email) => {
+    submittedEmails.push(email);
+    return { success: true, trackingId: `trk_${submittedEmails.length}` };
+  };
+
+  // Step 1: Process contact. Should trigger ONLY Pattern 1
+  await wfPipeline._processContactJob({
+    id: 'person_waterfall_001',
+    firstName: 'Alice',
+    lastName: 'Smith',
+    website: 'alicesmithtest.com'
+  });
+
+  assert.strictEqual(submittedEmails.length, 1, 'Only Pattern 1 triggered initially');
+  assert.strictEqual(submittedEmails[0], 'alice.smith@alicesmithtest.com');
+
+  // Step 2: Webhook callback returns INVALID for Pattern 1
+  await wfPipeline._handleWebhookCallback({
+    trackingId: 'trk_1',
+    email: 'alice.smith@alicesmithtest.com',
+    deliverable: false,
+    score: 0
+  });
+
+  // Check that Pattern 2 was escalated and triggered
+  assert.strictEqual(submittedEmails.length, 2, 'Pattern 2 was escalated upon Pattern 1 failure');
+  assert.strictEqual(submittedEmails[1], 'alicesmith@alicesmithtest.com');
+
+  // Step 3: Webhook callback returns VALID for Pattern 2
+  await wfPipeline._handleWebhookCallback({
+    trackingId: 'trk_2',
+    email: 'alicesmith@alicesmithtest.com',
+    deliverable: true,
+    score: 99
+  });
+
+  assert.strictEqual(submittedEmails.length, 2, 'No further patterns triggered after valid found (saved 8 calls!)');
+  assert.strictEqual(wfPipeline.metrics.webhookValidReceived, 1, 'Valid email captured');
+
+  await wfPipeline.safeStop();
+  fs.rmSync(waterfallTestDir, { recursive: true, force: true });
+  console.log('  ✓ Waterfall escalation successfully tested and verified (saved 8 redundant API calls)');
 
   console.log('\n🎉 ALL WEBHOOK HANDLING & CLUSTER TESTS PASSED SUCCESSFULLY!');
 }

@@ -121,7 +121,10 @@ export class PipelineManager {
       onValidationResult: this._handleWebhookCallback.bind(this)
     }) : null;
 
-    this.useMemoryQueue = false;
+    if (options.useMemoryQueue) {
+      this.useMemoryQueue = true;
+      this.queue = new InMemoryQueue(this.queueName);
+    }
     this.redisClient = null;
     this.queue = null;
     this.worker = null;
@@ -147,6 +150,14 @@ export class PipelineManager {
     // Start webhook receiver if enabled on this node
     if (this.webhookReceiver) {
       await this.webhookReceiver.start();
+    }
+
+    if (this.useMemoryQueue) {
+      if (!this.queue) {
+        this.queue = new InMemoryQueue(this.queueName);
+      }
+      this._startWorker();
+      return;
     }
 
     try {
@@ -241,6 +252,9 @@ export class PipelineManager {
     };
 
     this.worker = new Worker(this.queueName, async (job) => {
+      if (job.name === 'verify_next_pattern') {
+        return await this._processNextPatternJob(job.data);
+      }
       return await this._processContactJob(job.data);
     }, workerOptions);
 
@@ -259,7 +273,11 @@ export class PipelineManager {
           const job = this.queue.jobs.shift();
           try {
             this.queue.active = true;
-            await this._processContactJob(job.data);
+            if (job.name === 'verify_next_pattern') {
+              await this._processNextPatternJob(job.data);
+            } else {
+              await this._processContactJob(job.data);
+            }
             this.queue.completedCount++;
           } catch (err) {
             this.queue.failedCount++;
@@ -351,6 +369,47 @@ export class PipelineManager {
       } catch (err) {}
     }
     return this.localPendingTrackers.get(trackingId) || {};
+  }
+
+  /**
+   * Waterfall State Machine: Save or update person's candidate patterns progression
+   */
+  async _savePersonWaterfallState(personId, state) {
+    if (this.redisClient && !this.useMemoryQueue) {
+      try {
+        await this.redisClient.set(`waterfall:${personId}`, JSON.stringify(state), 'EX', 86400); // 24-hr TTL
+        return;
+      } catch (err) {}
+    }
+    if (!this.localWaterfallStates) this.localWaterfallStates = new Map();
+    this.localWaterfallStates.set(personId, state);
+  }
+
+  /**
+   * Waterfall State Machine: Fetch person's progression state
+   */
+  async _getPersonWaterfallState(personId) {
+    if (this.redisClient && !this.useMemoryQueue) {
+      try {
+        const raw = await this.redisClient.get(`waterfall:${personId}`);
+        if (raw) return JSON.parse(raw);
+      } catch (err) {}
+    }
+    return (this.localWaterfallStates && this.localWaterfallStates.get(personId)) || null;
+  }
+
+  /**
+   * Waterfall State Machine: Delete person state once finalized
+   */
+  async _deletePersonWaterfallState(personId) {
+    if (this.redisClient && !this.useMemoryQueue) {
+      try {
+        await this.redisClient.del(`waterfall:${personId}`);
+      } catch (err) {}
+    }
+    if (this.localWaterfallStates) {
+      this.localWaterfallStates.delete(personId);
+    }
   }
 
   /**
@@ -451,49 +510,119 @@ export class PipelineManager {
       return { success: true, scenario: 'ALL_PATTERNS_CACHED_INVALID' };
     }
 
-    // SCENARIO 3: Missing in cache -> Parallel Submit to Verify V6 Webhook API
-    const triggers = await Promise.all(
-      missingCacheCandidates.map(async (missingCandidate) => {
-        this.metrics.webhookSubmitted++;
-        const res = await this.webhookClient.submitForValidation(missingCandidate.email);
-        const returnedTrackingId = res.trackingId || localTrackingId;
+    // SCENARIO 3: Missing in cache -> Waterfall progression: Trigger ONLY Pattern 1
+    // Store full waterfall candidate list in Redis for cluster-wide escalation
+    await this._savePersonWaterfallState(id, {
+      personId: id,
+      firstName,
+      lastName,
+      companyId: companyId || '',
+      companyName: companyName || '',
+      website,
+      domain,
+      missingCandidates: missingCacheCandidates,
+      currentIndex: 0
+    });
 
-        // Persist in-flight tracker so ANY server receiving the webhook can resolve context
-        await this._saveInFlightTracker(returnedTrackingId, {
-          personId: id,
-          firstName,
-          lastName,
-          companyId: companyId || '',
-          companyName: companyName || '',
-          website,
-          domain: missingCandidate.domain,
-          pattern: missingCandidate.pattern,
-          email: missingCandidate.email,
-          submittedAt: Date.now()
-        });
+    const firstCandidate = missingCacheCandidates[0];
+    this.metrics.webhookSubmitted++;
+    const res = await this.webhookClient.submitForValidation(firstCandidate.email);
+    const returnedTrackingId = res.trackingId || localTrackingId;
 
-        return {
-          trackingId: returnedTrackingId,
-          personId: id,
-          firstName,
-          lastName,
-          companyId: companyId || '',
-          companyName: companyName || '',
-          website,
-          domain: missingCandidate.domain,
-          pattern: missingCandidate.pattern,
-          email: missingCandidate.email,
-          status: 'triggered_waiting_callback',
-          createdAt: Date.now()
-        };
-      })
-    );
+    // Persist in-flight tracker so ANY server receiving the webhook can resolve context
+    await this._saveInFlightTracker(returnedTrackingId, {
+      personId: id,
+      firstName,
+      lastName,
+      companyId: companyId || '',
+      companyName: companyName || '',
+      website,
+      domain: firstCandidate.domain,
+      pattern: firstCandidate.pattern,
+      email: firstCandidate.email,
+      patternIndex: 0,
+      submittedAt: Date.now()
+    });
 
-    if (triggers.length > 0) {
-      await this.webhookTriggersParquetWriter.appendBatch(triggers);
+    await this.webhookTriggersParquetWriter.append({
+      trackingId: returnedTrackingId,
+      personId: id,
+      firstName,
+      lastName,
+      companyId: companyId || '',
+      companyName: companyName || '',
+      website,
+      domain: firstCandidate.domain,
+      pattern: firstCandidate.pattern,
+      email: firstCandidate.email,
+      status: 'triggered_waiting_callback',
+      createdAt: Date.now()
+    });
+
+    return { success: true, scenario: 'WATERFALL_PATTERN_1_TRIGGERED', email: firstCandidate.email };
+  }
+
+  /**
+   * Distributed Waterfall Escalator:
+   * Processed by ANY worker (Server 2, 3, or 4) when the previous pattern was undeliverable
+   */
+  async _processNextPatternJob(jobData) {
+    const { personId, nextIndex } = jobData;
+    const waterfallState = await this._getPersonWaterfallState(personId);
+    if (!waterfallState || !waterfallState.missingCandidates) {
+      return { success: false, reason: 'NO_WATERFALL_STATE' };
     }
 
-    return { success: true, scenario: 'SENT_TO_WEBHOOK_VALIDATION', count: triggers.length };
+    // Check if person was already claimed as valid while in-flight
+    if (this.resolvedPersonIds.has(personId)) {
+      await this._deletePersonWaterfallState(personId);
+      return { success: true, scenario: 'ALREADY_RESOLVED_VALID' };
+    }
+
+    if (nextIndex >= waterfallState.missingCandidates.length) {
+      // All candidate patterns have been tested and returned invalid
+      await this._deletePersonWaterfallState(personId);
+      return { success: true, scenario: 'ALL_PATTERNS_EXHAUSTED' };
+    }
+
+    const nextCandidate = waterfallState.missingCandidates[nextIndex];
+    waterfallState.currentIndex = nextIndex;
+    await this._savePersonWaterfallState(personId, waterfallState);
+
+    this.metrics.webhookSubmitted++;
+    const res = await this.webhookClient.submitForValidation(nextCandidate.email);
+    const trackingId = res.trackingId || this._generateTrackingId(personId);
+
+    await this._saveInFlightTracker(trackingId, {
+      personId: personId,
+      firstName: waterfallState.firstName,
+      lastName: waterfallState.lastName,
+      companyId: waterfallState.companyId,
+      companyName: waterfallState.companyName,
+      website: waterfallState.website,
+      domain: nextCandidate.domain,
+      pattern: nextCandidate.pattern,
+      email: nextCandidate.email,
+      patternIndex: nextIndex,
+      submittedAt: Date.now()
+    });
+
+    await this.webhookTriggersParquetWriter.append({
+      trackingId,
+      personId,
+      firstName: waterfallState.firstName,
+      lastName: waterfallState.lastName,
+      companyId: waterfallState.companyId,
+      companyName: waterfallState.companyName,
+      website: waterfallState.website,
+      domain: nextCandidate.domain,
+      pattern: nextCandidate.pattern,
+      email: nextCandidate.email,
+      status: 'triggered_waiting_callback',
+      createdAt: Date.now()
+    });
+
+    return { success: true, scenario: 'NEXT_PATTERN_TRIGGERED', patternIndex: nextIndex, email: nextCandidate.email };
   }
 
   /**
@@ -513,6 +642,9 @@ export class PipelineManager {
     if (isDeliverable && score >= 90) {
       // Option A: First Valid Wins per personId across the cluster
       const isFirstValid = await this._claimFirstValidForPerson(personId);
+
+      // Successfully found a deliverable valid email! Delete waterfall state so no more patterns are triggered
+      await this._deletePersonWaterfallState(personId);
 
       if (isFirstValid) {
         await this.validParquetWriter.append({
@@ -583,6 +715,37 @@ export class PipelineManager {
         createdAt: Date.now()
       });
       this.metrics.webhookInvalidReceived++;
+
+      // WATERFALL ESCALATION:
+      // Since this pattern failed, escalate to the next pattern if available!
+      const currentPatternIndex = typeof context.patternIndex === 'number' ? context.patternIndex : 0;
+      const nextIndex = currentPatternIndex + 1;
+
+      if (personId && !this.resolvedPersonIds.has(personId)) {
+        const waterfallState = await this._getPersonWaterfallState(personId);
+        if (waterfallState && waterfallState.missingCandidates && nextIndex < waterfallState.missingCandidates.length) {
+          if (this.useMemoryQueue) {
+            await this._processNextPatternJob({ personId, nextIndex });
+          } else {
+            // Push escalation job to Redis queue so ANY worker node can test Pattern #N
+            try {
+              await this.queue.add('verify_next_pattern', {
+                personId,
+                nextIndex
+              }, {
+                jobId: `escalate_${personId}_${nextIndex}`,
+                priority: 1 // High priority so in-flight people resolve promptly
+              });
+            } catch (enqueueErr) {
+              // Local fallback
+              this._processNextPatternJob({ personId, nextIndex }).catch(() => {});
+            }
+          }
+        } else if (waterfallState) {
+          // All patterns exhausted
+          await this._deletePersonWaterfallState(personId);
+        }
+      }
     }
 
     if (trackingId) {
