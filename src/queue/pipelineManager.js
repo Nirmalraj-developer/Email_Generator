@@ -338,12 +338,15 @@ export class PipelineManager {
     const cacheEvaluationResults = [];
     const missingCacheCandidates = [];
 
-    // STEP 1: Evaluate candidates against Cache API sequentially
-    for (const candidate of candidates) {
-      if (this.isStopping) break;
+    // STEP 1: Fast Parallel Cache Evaluation for all candidate patterns
+    this.metrics.cacheChecks += candidates.length;
+    const cacheResults = await Promise.all(
+      candidates.map(candidate => this.cacheClient.checkCache(candidate.email))
+    );
 
-      this.metrics.cacheChecks++;
-      const cacheResult = await this.cacheClient.checkCache(candidate.email);
+    for (let i = 0; i < candidates.length; i++) {
+      const candidate = candidates[i];
+      const cacheResult = cacheResults[i];
       cacheEvaluationResults.push({ candidate, cacheResult });
 
       const score = Number(cacheResult.score ?? cacheResult.cacheResponse?.score ?? 0);
@@ -351,7 +354,7 @@ export class PipelineManager {
       const inCache = Boolean(cacheResult.foundInCache);
 
       // SCENARIO 1: Valid found in cache ("isDeliverable": true and "score": 99 / >= 90)
-      if (inCache && isDeliverable && (score >= 90 || score === 99)) {
+      if (inCache && isDeliverable && (score >= 90 || score === 99) && !validFound) {
         validFound = {
           trackingId: localTrackingId,
           personId: id,
@@ -372,10 +375,8 @@ export class PipelineManager {
           isB2C: Boolean(cacheResult.cacheResponse?.isB2C),
           createdAt: Date.now()
         };
-        break; // Stop testing more patterns
       }
 
-      // If inCache: false -> Collect candidate for Verify V6 Webhook validation
       if (!inCache) {
         missingCacheCandidates.push(candidate);
       }
@@ -414,45 +415,43 @@ export class PipelineManager {
       return { success: true, scenario: 'ALL_PATTERNS_CACHED_INVALID' };
     }
 
-    // SCENARIO 3: Missing in cache -> Record Webhook Trigger & Submit to Verify V6
-    const triggers = [];
+    // SCENARIO 3: Missing in cache -> Parallel Submit to Verify V6 Webhook API
+    const triggers = await Promise.all(
+      missingCacheCandidates.map(async (missingCandidate) => {
+        this.metrics.webhookSubmitted++;
+        const res = await this.webhookClient.submitForValidation(missingCandidate.email);
+        const returnedTrackingId = res.trackingId || localTrackingId;
 
-    for (const missingCandidate of missingCacheCandidates) {
-      if (this.isStopping) break;
+        // Persist in-flight tracker so ANY server receiving the webhook can resolve context
+        await this._saveInFlightTracker(returnedTrackingId, {
+          personId: id,
+          firstName,
+          lastName,
+          companyId: companyId || '',
+          companyName: companyName || '',
+          website,
+          domain: missingCandidate.domain,
+          pattern: missingCandidate.pattern,
+          email: missingCandidate.email,
+          submittedAt: Date.now()
+        });
 
-      this.metrics.webhookSubmitted++;
-      const res = await this.webhookClient.submitForValidation(missingCandidate.email);
-      const returnedTrackingId = res.trackingId || localTrackingId;
-
-      // Persist in-flight tracker so ANY server receiving the webhook can resolve context
-      await this._saveInFlightTracker(returnedTrackingId, {
-        personId: id,
-        firstName,
-        lastName,
-        companyId: companyId || '',
-        companyName: companyName || '',
-        website,
-        domain: missingCandidate.domain,
-        pattern: missingCandidate.pattern,
-        email: missingCandidate.email,
-        submittedAt: Date.now()
-      });
-
-      triggers.push({
-        trackingId: returnedTrackingId,
-        personId: id,
-        firstName,
-        lastName,
-        companyId: companyId || '',
-        companyName: companyName || '',
-        website,
-        domain: missingCandidate.domain,
-        pattern: missingCandidate.pattern,
-        email: missingCandidate.email,
-        status: 'triggered_waiting_callback',
-        createdAt: Date.now()
-      });
-    }
+        return {
+          trackingId: returnedTrackingId,
+          personId: id,
+          firstName,
+          lastName,
+          companyId: companyId || '',
+          companyName: companyName || '',
+          website,
+          domain: missingCandidate.domain,
+          pattern: missingCandidate.pattern,
+          email: missingCandidate.email,
+          status: 'triggered_waiting_callback',
+          createdAt: Date.now()
+        };
+      })
+    );
 
     if (triggers.length > 0) {
       await this.webhookTriggersParquetWriter.appendBatch(triggers);
