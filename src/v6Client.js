@@ -28,8 +28,8 @@ export class V6Client {
 
     this.client = axios.create({
       timeout: timeoutMs,
-      httpAgent: new http.Agent({ keepAlive: true, maxSockets: 500, maxFreeSockets: 256, family: 4 }),
-      httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 500, maxFreeSockets: 256, family: 4 }),
+      httpAgent: new http.Agent({ keepAlive: true, maxSockets: 1000, maxFreeSockets: 512, family: 4 }),
+      httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 1000, maxFreeSockets: 512, family: 4 }),
       headers: {
         'Content-Type': 'application/json',
         ...(apiToken ? { apitoken: apiToken } : {})
