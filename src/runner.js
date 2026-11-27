@@ -118,6 +118,10 @@ export class V6WaterfallRunner {
     state.currentIndex = patternIndex;
     const localTrackingId = this._genTrackingId(personId, patternIndex);
 
+    if (this.cfg.verboseLogs) {
+      console.log(`[Send] Person ${personId}: Pattern ${patternIndex + 1}/${state.pendingPatterns.length} -> ${candidate.email}`);
+    }
+
     this.activeSends++;
     try {
       const res = await this.v6Client.submit(candidate.email, localTrackingId);
@@ -196,8 +200,12 @@ export class V6WaterfallRunner {
 
     const score = Number(payload.score ?? 0);
     const deliverable = Boolean(payload.deliverable ?? payload.isDeliverable ?? (score >= 90));
+    const patternNum = patternIndex + 1;
 
     if (deliverable && score >= 90) {
+      if (this.cfg.verboseLogs) {
+        console.log(`[Webhook] ✅ VALID Pattern ${patternNum} | Person ${personId} | ${email || tracker?.email || ''} | score=${score}`);
+      }
       if (!this.resolvedValid.has(personId)) {
         this.resolvedValid.add(personId);
         await this.validWriter.append({
@@ -219,6 +227,9 @@ export class V6WaterfallRunner {
     }
 
     // Invalid callback -> write to invalid parquet and escalate to Pattern N+1
+    if (this.cfg.verboseLogs) {
+      console.log(`[Webhook] ❌ INVALID Pattern ${patternNum} | Person ${personId} | ${email || tracker?.email || ''} | score=${score} | deliverable=${deliverable} | reason=${payload.reason || payload.message || 'undeliverable'}`);
+    }
     await this.invalidWriter.append({
       trackingId: resolvedTrackingId || trackingId || '',
       personId,

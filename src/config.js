@@ -32,5 +32,6 @@ export const config = {
   checkpointFile: process.env.CHECKPOINT_FILE || './data/processed_ids.log',
   errorLogFile: process.env.ERROR_LOG_FILE || './logs/error.log',
   statsIntervalMs: parseInt(process.env.STATS_INTERVAL_MS || '1000', 10),
+  verboseLogs: process.env.VERBOSE_LOGS !== 'false',
   maxContacts: process.env.MAX_CONTACTS_LIMIT ? parseInt(process.env.MAX_CONTACTS_LIMIT, 10) : Infinity
 };
