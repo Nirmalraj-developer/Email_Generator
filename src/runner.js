@@ -118,7 +118,7 @@ export class V6WaterfallRunner {
     state.currentIndex = patternIndex;
     const localTrackingId = this._genTrackingId(personId, patternIndex);
 
-    if (this.cfg.verboseLogs) {
+    if (this.cfg.verboseLogs && patternIndex > 0) {
       console.log(`[Send] Person ${personId}: Pattern ${patternIndex + 1}/${state.pendingPatterns.length} -> ${candidate.email}`);
     }
 
