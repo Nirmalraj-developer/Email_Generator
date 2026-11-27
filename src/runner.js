@@ -286,7 +286,7 @@ export class V6WaterfallRunner {
         updatedAt: new Date().toISOString(),
         serverId: this.cfg.serverId,
         targetRps: this.cfg.v6.targetRps,
-        sendRate,
+        sendRate: sentRate,
         webhookInRate: inRate,
         activeSends: this.activeSends,
         inFlight: this.inFlightByTracking.size,

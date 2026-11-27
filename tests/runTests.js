@@ -106,7 +106,7 @@ async function runTests() {
     output: { baseDir: outDir, maxCapacity: 1000000 },
     checkpointFile: path.join(TEST_DIR, 'processed_ids.log'),
     errorLogFile: path.join(TEST_DIR, 'error.log'),
-    statsIntervalMs: 5000
+    statsIntervalMs: 200
   });
 
   await runner.start({ waitForInFlightMs: 1500 });
