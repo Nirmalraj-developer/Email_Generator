@@ -18,6 +18,7 @@ export class ChunkedJsonWriter {
     this.partIndex = 1;
     this.count = 0;
     this.totalWritten = 0;
+    this._drainPromise = null;
 
     if (!fs.existsSync(this.outputDir)) {
       fs.mkdirSync(this.outputDir, { recursive: true });
@@ -51,7 +52,15 @@ export class ChunkedJsonWriter {
     this.totalWritten++;
 
     if (!ok) {
-      await new Promise(resolve => this.stream.once('drain', resolve));
+      if (!this._drainPromise) {
+        this._drainPromise = new Promise(resolve => {
+          this.stream.once('drain', () => {
+            this._drainPromise = null;
+            resolve();
+          });
+        });
+      }
+      await this._drainPromise;
     }
     if (this.count >= this.maxCapacity) {
       await this._rotate();
