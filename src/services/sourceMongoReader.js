@@ -34,8 +34,8 @@ export class SourceMongoReader {
     this.client = new MongoClient(this.uri, {
       maxPoolSize: 50,
       minPoolSize: 10,
-      serverSelectionTimeoutMS: 10000,
-      socketTimeoutMS: 60000
+      serverSelectionTimeoutMS: 15000,
+      socketTimeoutMS: 180000
     });
     await this.client.connect();
     this.peopleCol = this.client.db(this.peopleDbName).collection(this.peopleColName);
