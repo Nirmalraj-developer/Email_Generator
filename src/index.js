@@ -1,24 +1,24 @@
-import { AppController } from './workflow/appController.js';
+import { V6WaterfallRunner } from './runner.js';
 
-async function bootstrap() {
-  const app = new AppController();
-  await app.init();
-  await app.run();
-  await app.stop();
+const runner = new V6WaterfallRunner();
+
+let stopping = false;
+async function shutdown(signal) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`\nReceived ${signal}...`);
+  await runner.safeStop();
   process.exit(0);
 }
 
-// Handle transient Redis connection drops without crashing
-process.on('uncaughtException', (err) => {
-  if (err && (err.message?.includes('Connection is closed') || err.message?.includes('ECONNRESET'))) {
-    console.warn('[Redis] Transient connection dropout detected, reconnecting automatically...');
-    return;
-  }
-  console.error('Fatal application error:', err);
-  process.exit(1);
-});
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-bootstrap().catch(err => {
-  console.error('Fatal application error:', err);
-  process.exit(1);
-});
+runner.start()
+  .then(() => runner.safeStop())
+  .then(() => process.exit(0))
+  .catch(async (err) => {
+    console.error('Fatal runner error:', err);
+    await runner.safeStop();
+    process.exit(1);
+  });

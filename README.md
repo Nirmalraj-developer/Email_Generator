@@ -1,78 +1,23 @@
-# Email Generator & Verification Pipeline
+# Verify V6 Waterfall Webhook Runner
 
-A production-grade, fault-tolerant Node.js workflow that streams contacts from Elasticsearch, generates email pattern permutations, verifies them cache-first before catch-all validation, and safely stores verified leads in MongoDB.
+Standalone, high-throughput Verify V6 webhook sender, receiver, and 3-stage Parquet writer (no MongoDB, Redis, or Elasticsearch dependencies).
 
-## Features
-- **Strict Read-Only Elasticsearch**: Only reads records matching `email_smt_reason != 'verified' AND website is not null`. No direct index writes or updates.
-- **Pattern Generator**: Generates all 10 canonical email permutations using sanitized first name, last name, and cleaned domain.
-- **Cache-First Verification**: Checks `https://cachevalidation.no2bounce.com/api/cache/check/{email}` before consuming real-time credits.
-- **Catch-All / Real-Time Validation**: Evaluates cache misses against the catch-all SMTP endpoint.
-- **Dedicated MongoDB Persistence**: Upserts valid emails with unique indexes and audit metadata.
-- **BullMQ Concurrency & Rate Limiting**: Backpressure control with exponential backoff retries (includes automatic in-memory fallback for development when Redis is offline).
-- **Safe Stop & Patch Continue**: Checkpointed `search_after` cursors ensure uninterrupted resume capability on restart or crash.
-- **Monitoring CLI**: Real-time terminal dashboard.
+## Flow
+1. Streams all `.jsonl`/`.json` slice files from `INPUT_DIR` (`/root/no2bounce-webhook/validation/output`), excluding `all_verifications_unique.jsonl`.
+2. Skips completed contacts (`primary_email` set or `email_smt_status` = `completed`/`valid`/`verified`) and already-checkpointed IDs (`data/processed_ids.log`).
+3. Extracts only patterns with `score === null` and runs a strict waterfall:
+   - Sends Pattern 1 to Verify V6 (`TARGET_RPS=3000`, `MAX_CONCURRENCY=1500`) with exponential backoff retries.
+   - Logs every outbound request to `data/webhook_triggers/*.parquet`.
+   - Receives callbacks on `0.0.0.0:3000/api/webhook/validation`.
+   - On valid callback (`deliverable: true`, `score >= 90`): writes 1 row to `data/valid/*.parquet` and stops further patterns for that person.
+   - On invalid callback: writes to `data/invalid/*.parquet` and immediately triggers the next `score === null` pattern.
+4. Prints 1-second live stats (`Send/s`, `WebhookIn/s`, `Active`, `InFlight`, `EscalationsQ`, `Valid`, `Invalid`, `Skipped`, `Retries`, `Err`) and seals all `.parquet` files cleanly on `SIGINT`/`SIGTERM`.
 
----
-
-## Quick Start
-
-### 1. Configure Environment
-Copy and adjust `.env.example`:
+## Run
 ```bash
+npm install
 cp .env.example .env
-```
-
-Key environment options:
-```env
-USE_MOCKS=false                          # Set to true for local testing without live APIs
-ELASTICSEARCH_NODE=http://localhost:9200
-ELASTICSEARCH_INDEX=contacts
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
-MONGODB_URI=mongodb://localhost:27017/email_generator_db
-CACHE_VALIDATION_TOKEN=your_bearer_token
-CATCHALL_VERIFY_TOKEN=your_bearer_token
-WORKER_CONCURRENCY=5
-```
-
-### 2. Run Test Suite
-```bash
-npm test
-```
-
-### 3. Start Workflow
-```bash
 npm start
-```
-
-### 4. Open Live Monitor
-In another terminal session:
-```bash
-npm run monitor
-```
-
----
-
-## Architecture & Project Structure
-```
-├── .env.example
-├── package.json
-├── src/
-│   ├── index.js                     # Main entrypoint with safe shutdown
-│   ├── config/index.js              # Centralized configuration & environment loader
-│   ├── services/
-│   │   ├── patternGenerator.js      # 10 default template generator & domain cleaner
-│   │   ├── cacheValidationClient.js # Cache endpoint client with mock mode
-│   │   ├── catchAllVerificationClient.js # Real-time catch-all verification client
-│   │   └── elasticReader.js         # Read-only Elasticsearch stream reader
-│   ├── storage/
-│   │   └── mongoRepository.js       # MongoDB persistence & checkpoint store
-│   ├── queue/
-│   │   └── pipelineManager.js       # BullMQ queue & worker pipeline
-│   ├── workflow/
-│   │   └── appController.js         # Stream orchestration & patch-continue logic
-│   └── cli/
-│       └── monitor.js               # Terminal monitoring dashboard
-└── tests/
-    └── runAllTests.js               # Comprehensive unit & integration tests
+# Or with PM2:
+npx pm2 start src/index.js --name "v6-runner"
 ```
