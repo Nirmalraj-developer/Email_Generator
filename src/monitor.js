@@ -39,10 +39,10 @@ function render() {
     console.log(`║  Active HTTP:       ${String(s.activeSends).padEnd(16)} InFlight CB: ${String(s.inFlight.toLocaleString()).padEnd(11)}║`);
     console.log(`║  Escalations Queue: ${String(s.escalationsQ.toLocaleString()).padEnd(44)}║`);
     console.log('╠══════════════════════════════════════════════════════════════════╣');
+    const totalRecv = (s.validCount || 0) + (s.invalidCount || 0);
     console.log(`║  Contacts Loaded:   ${String(s.loadedContacts.toLocaleString()).padEnd(16)} Skipped: ${String(s.skippedCompleted.toLocaleString()).padEnd(15)}║`);
-    console.log(`║  ✅ Valid Saved:    ${String(s.validCount.toLocaleString()).padEnd(44)}║`);
-    console.log(`║  ❌ Invalid Saved:  ${String(s.invalidCount.toLocaleString()).padEnd(44)}║`);
-    console.log(`║  📨 Triggers Sent:  ${String(s.triggersWritten.toLocaleString()).padEnd(44)}║`);
+    console.log(`║  ✅ Valid Saved:    ${String(s.validCount.toLocaleString()).padEnd(16)} ❌ Invalid: ${String(s.invalidCount.toLocaleString()).padEnd(13)}║`);
+    console.log(`║  📨 Triggers Sent:  ${String(s.triggersWritten.toLocaleString()).padEnd(16)} 📬 Recv:    ${String(totalRecv.toLocaleString()).padEnd(13)}║`);
     console.log(`║  🔄 Retries:        ${String(s.retries.toLocaleString()).padEnd(16)} Errors: ${String(s.errors.toLocaleString()).padEnd(16)}║`);
   }
   console.log('╠══════════════════════════════════════════════════════════════════╣');
