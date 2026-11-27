@@ -286,12 +286,16 @@ export class V6WaterfallRunner {
     };
 
     const drainEscalations = async () => {
-      while (this.escalationQueue.length > 0 && !this.isStopping) {
-        if (inFlightPromises.size >= this.cfg.v6.maxConcurrency) {
-          await new Promise(r => setTimeout(r, 5));
-          continue;
+      if (this.escalationQueue.length === 0) return;
+      // Swap out array in O(1) to avoid O(n) Array.shift() overhead at 3,000+ req/s
+      const batch = this.escalationQueue;
+      this.escalationQueue = [];
+      for (let i = 0; i < batch.length && !this.isStopping; i++) {
+        while (inFlightPromises.size >= this.cfg.v6.maxConcurrency && !this.isStopping) {
+          await new Promise(r => setTimeout(r, 2));
         }
-        const job = this.escalationQueue.shift();
+        if (this.isStopping) break;
+        const job = batch[i];
         launchTask(() => this._dispatchPattern(job.personId, job.patternIndex));
       }
     };
