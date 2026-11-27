@@ -345,8 +345,13 @@ export class V6WaterfallRunner {
 
       await drainEscalations();
 
-      while (inFlightPromises.size >= this.cfg.v6.maxConcurrency && !this.isStopping) {
-        await new Promise(r => setTimeout(r, 5));
+      // Backpressure: pause loading NEW Pattern 1 contacts if InFlight >= MAX_INFLIGHT,
+      // while still draining Pattern 2-10 escalations immediately.
+      while (
+        (inFlightPromises.size >= this.cfg.v6.maxConcurrency || this.inFlightByTracking.size >= this.cfg.v6.maxInFlight) &&
+        !this.isStopping
+      ) {
+        await new Promise(r => setTimeout(r, 20));
         await drainEscalations();
       }
       if (this.isStopping) break;

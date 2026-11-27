@@ -14,6 +14,7 @@ export const config = {
     apiToken: process.env.WEBHOOK_API_TOKEN || '',
     targetRps: parseInt(process.env.TARGET_RPS || '3000', 10),
     maxConcurrency: parseInt(process.env.MAX_CONCURRENCY || '1500', 10),
+    maxInFlight: parseInt(process.env.MAX_INFLIGHT || '50000', 10),
     timeoutMs: parseInt(process.env.API_TIMEOUT_MS || '15000', 10),
     maxRetries: parseInt(process.env.MAX_RETRIES || '3', 10)
   },
