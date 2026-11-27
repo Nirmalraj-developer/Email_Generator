@@ -272,7 +272,7 @@ export class V6WaterfallRunner {
     }, this.cfg.statsIntervalMs);
   }
 
-  async start({ waitForInFlightMs = 5000 } = {}) {
+  async start({ waitForInFlightMs = 120000 } = {}) {
     await this.webhookServer.start();
     console.log(`[WebhookServer] Listening on 0.0.0.0:${this.cfg.webhook.port}${this.cfg.webhook.path}`);
     console.log(`[Runner] Reading slices from: ${this.cfg.inputDir} (Target: ${this.cfg.v6.targetRps} req/s, MaxConcurrency: ${this.cfg.v6.maxConcurrency})`);
@@ -306,6 +306,7 @@ export class V6WaterfallRunner {
 
     for await (const contact of contactStream) {
       if (this.isStopping) break;
+      if (this.stats.loadedContacts >= this.cfg.maxContacts) break;
 
       await drainEscalations();
 
