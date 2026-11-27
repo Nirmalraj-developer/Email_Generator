@@ -1,16 +1,16 @@
 {
   "name": "email_generator",
   "version": "2.0.0",
-  "description": "High-throughput Verify V6 waterfall webhook sender, receiver, and 3-stage Parquet writer",
+  "description": "High-throughput Verify V6 waterfall webhook sender, receiver, and 3-stage JSONL writer",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node tests/runTests.js"
+    "test": "node tests/runTests.js",
+    "test:webhook": "node tests/testLiveWebhook.js"
   },
   "dependencies": {
     "axios": "^1.7.9",
-    "dotenv": "^16.4.7",
-    "parquetjs-lite": "^0.8.7"
+    "dotenv": "^16.4.7"
   }
 }

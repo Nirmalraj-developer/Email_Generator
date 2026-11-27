@@ -3,7 +3,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { config } from './config.js';
 import { ErrorLogger } from './logger.js';
-import { ChunkedParquetWriter, validSchema, webhookTriggerSchema, invalidSchema } from './parquetWriter.js';
+import { ChunkedJsonWriter } from './jsonWriter.js';
 import { loadCheckpointSet, streamPendingContacts } from './sliceReader.js';
 import { WebhookServer } from './webhookServer.js';
 import { V6Client } from './v6Client.js';
@@ -15,32 +15,29 @@ export class V6WaterfallRunner {
       ...customConfig,
       v6: { ...config.v6, ...(customConfig.v6 || {}) },
       webhook: { ...config.webhook, ...(customConfig.webhook || {}) },
-      parquet: { ...config.parquet, ...(customConfig.parquet || {}) }
+      output: { ...config.output, ...(customConfig.output || {}) }
     };
 
     this.errorLogger = new ErrorLogger(this.cfg.errorLogFile);
 
-    this.validWriter = new ChunkedParquetWriter({
-      outputDir: path.join(this.cfg.parquet.baseDir, 'valid'),
+    this.validWriter = new ChunkedJsonWriter({
+      outputDir: path.join(this.cfg.output.baseDir, 'valid'),
       filePrefix: 'valid_emails',
-      schema: validSchema,
-      maxCapacity: this.cfg.parquet.maxCapacity,
+      maxCapacity: this.cfg.output.maxCapacity,
       serverId: this.cfg.serverId
     });
 
-    this.triggerWriter = new ChunkedParquetWriter({
-      outputDir: path.join(this.cfg.parquet.baseDir, 'webhook_triggers'),
+    this.triggerWriter = new ChunkedJsonWriter({
+      outputDir: path.join(this.cfg.output.baseDir, 'webhook_triggers'),
       filePrefix: 'webhook_triggers',
-      schema: webhookTriggerSchema,
-      maxCapacity: this.cfg.parquet.maxCapacity,
+      maxCapacity: this.cfg.output.maxCapacity,
       serverId: this.cfg.serverId
     });
 
-    this.invalidWriter = new ChunkedParquetWriter({
-      outputDir: path.join(this.cfg.parquet.baseDir, 'invalid'),
+    this.invalidWriter = new ChunkedJsonWriter({
+      outputDir: path.join(this.cfg.output.baseDir, 'invalid'),
       filePrefix: 'invalid_emails',
-      schema: invalidSchema,
-      maxCapacity: this.cfg.parquet.maxCapacity,
+      maxCapacity: this.cfg.output.maxCapacity,
       serverId: this.cfg.serverId
     });
 
@@ -340,7 +337,7 @@ export class V6WaterfallRunner {
   async safeStop() {
     if (this.isStopping) return;
     this.isStopping = true;
-    console.log('\n🛑 [SafeStop] Stopping ingestion and flushing Parquet files...');
+    console.log('\n🛑 [SafeStop] Stopping ingestion and flushing JSONL files...');
 
     if (this.statsTimer) clearInterval(this.statsTimer);
 
@@ -360,7 +357,7 @@ export class V6WaterfallRunner {
     await new Promise(resolve => this.checkpointStream.end(resolve));
     await this.errorLogger.close();
     console.log(
-      `✅ [SafeStop] All Parquet files sealed cleanly. ` +
+      `✅ [SafeStop] All JSONL files flushed and closed cleanly. ` +
       `Valid=${this.stats.validCount}, Invalid=${this.stats.invalidCount}, Triggers=${this.stats.triggersWritten}`
     );
   }

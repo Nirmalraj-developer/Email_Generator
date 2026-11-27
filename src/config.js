@@ -24,9 +24,9 @@ export const config = {
     callbackBaseUrl: (process.env.WEBHOOK_CALLBACK_BASE_URL || 'http://127.0.0.1:3000').replace(/\/+$/, '')
   },
 
-  parquet: {
-    baseDir: process.env.PARQUET_BASE_DIR || './data',
-    maxCapacity: parseInt(process.env.PARQUET_MAX_CAPACITY || '1000000', 10)
+  output: {
+    baseDir: process.env.OUTPUT_BASE_DIR || './data',
+    maxCapacity: parseInt(process.env.MAX_RECORDS_PER_FILE || '1000000', 10)
   },
 
   checkpointFile: process.env.CHECKPOINT_FILE || './data/processed_ids.log',

@@ -2,7 +2,6 @@ import assert from 'assert';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
-import parquet from 'parquetjs-lite';
 import { V6WaterfallRunner } from '../src/runner.js';
 import { getSliceFiles } from '../src/sliceReader.js';
 
@@ -14,16 +13,15 @@ function cleanup() {
   }
 }
 
-async function readParquetRows(dir) {
+function readJsonlRows(dir) {
   if (!fs.existsSync(dir)) return [];
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.parquet'));
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.jsonl'));
   const rows = [];
   for (const f of files) {
-    const reader = await parquet.ParquetReader.openFile(path.join(dir, f));
-    const cursor = reader.getCursor();
-    let rec;
-    while ((rec = await cursor.next())) rows.push(rec);
-    await reader.close();
+    const content = fs.readFileSync(path.join(dir, f), 'utf8');
+    for (const line of content.split('\n')) {
+      if (line.trim()) rows.push(JSON.parse(line));
+    }
   }
   return rows;
 }
@@ -104,7 +102,7 @@ async function runTests() {
     excludedFiles: ['all_verifications_unique.jsonl'],
     v6: { url: 'http://127.0.0.1:4091/validate', apiToken: 'test', targetRps: 3000, maxConcurrency: 100, timeoutMs: 5000, maxRetries: 1 },
     webhook: { port: 4092, path: '/api/webhook/validation', callbackBaseUrl: 'http://127.0.0.1:4092' },
-    parquet: { baseDir: outDir, maxCapacity: 1000000 },
+    output: { baseDir: outDir, maxCapacity: 1000000 },
     checkpointFile: path.join(TEST_DIR, 'processed_ids.log'),
     errorLogFile: path.join(TEST_DIR, 'error.log'),
     statsIntervalMs: 5000
@@ -114,9 +112,9 @@ async function runTests() {
   await runner.safeStop();
   await new Promise(resolve => mockV6.close(resolve));
 
-  const validRows = await readParquetRows(path.join(outDir, 'valid'));
-  const invalidRows = await readParquetRows(path.join(outDir, 'invalid'));
-  const triggerRows = await readParquetRows(path.join(outDir, 'webhook_triggers'));
+  const validRows = readJsonlRows(path.join(outDir, 'valid'));
+  const invalidRows = readJsonlRows(path.join(outDir, 'invalid'));
+  const triggerRows = readJsonlRows(path.join(outDir, 'webhook_triggers'));
 
   assert.strictEqual(validRows.length, 1, 'Expected 1 valid row');
   assert.strictEqual(validRows[0].email, 'p2.valid@test.com');
@@ -125,7 +123,7 @@ async function runTests() {
   assert.strictEqual(triggerRows.length, 2, 'Expected 2 webhook triggers (skipped non-null score)');
 
   cleanup();
-  console.log('✅ All v6-webhook-runner tests passed!');
+  console.log('✅ All JSONL waterfall & webhook tests passed!');
 }
 
 runTests().catch(err => {
