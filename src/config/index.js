@@ -59,7 +59,8 @@ export const config = {
     // The public/accessible callback URL of that ONE single server (e.g. http://10.0.0.1:3000)
     // Every worker server will pass THIS URL in their requests to verifyv6
     callbackBaseUrl: process.env.WEBHOOK_CALLBACK_BASE_URL || 'http://127.0.0.1:3000',
-    serverPort: parseInt(process.env.WEBHOOK_SERVER_PORT || '3000', 10)
+    serverPort: parseInt(process.env.WEBHOOK_SERVER_PORT || '3000', 10),
+    maxWaterfallPatterns: parseInt(process.env.MAX_WATERFALL_PATTERNS || '10', 10)
   },
 
   // WORKER TUNING FOR 150M TARGET (16-Core / 251GB RAM CLUSTER)

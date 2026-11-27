@@ -417,6 +417,41 @@ export class PipelineManager {
   }
 
   /**
+   * Domain Pattern Memory: Retrieve previously successful pattern for a domain
+   */
+  async _getBestDomainPattern(domain) {
+    if (!domain) return null;
+    if (!this.localDomainPatterns) this.localDomainPatterns = new Map();
+    if (this.localDomainPatterns.has(domain)) {
+      return this.localDomainPatterns.get(domain);
+    }
+    if (this.redisClient && !this.useMemoryQueue) {
+      try {
+        const pattern = await this.redisClient.get(`domain_pattern:${domain}`);
+        if (pattern) {
+          if (this.localDomainPatterns.size > 100000) this.localDomainPatterns.clear();
+          this.localDomainPatterns.set(domain, pattern);
+          return pattern;
+        }
+      } catch (err) {}
+    }
+    return null;
+  }
+
+  /**
+   * Domain Pattern Memory: Cache winning pattern for a domain (7 days)
+   */
+  async _saveBestDomainPattern(domain, pattern) {
+    if (!domain || !pattern) return;
+    if (!this.localDomainPatterns) this.localDomainPatterns = new Map();
+    if (this.localDomainPatterns.size > 100000) this.localDomainPatterns.clear();
+    this.localDomainPatterns.set(domain, pattern);
+    if (this.redisClient && !this.useMemoryQueue) {
+      this.redisClient.set(`domain_pattern:${domain}`, pattern, 'EX', 604800).catch(() => {});
+    }
+  }
+
+  /**
    * Main Contact Evaluation Pipeline:
    */
   async _processContactJob(contact) {
@@ -485,6 +520,7 @@ export class PipelineManager {
       if (isFirst) {
         await this.validParquetWriter.append(validFound);
         this.metrics.validFromCache++;
+        this._saveBestDomainPattern(domain, validFound.pattern).catch(() => {});
         if (this.redisClient && !this.useMemoryQueue) {
           this.redisClient.hincrby('cluster:metrics', 'validFromCache', 1).catch(() => {});
           this.redisClient.hincrby('cluster:metrics', 'totalValid', 1).catch(() => {});
@@ -526,6 +562,21 @@ export class PipelineManager {
     }
 
     // SCENARIO 3: Missing in cache -> Waterfall progression: Trigger ONLY Pattern 1
+    // Prioritize known winning pattern for this domain first, then cap to MAX_WATERFALL_PATTERNS
+    let orderedCandidates = missingCacheCandidates;
+    const knownPattern = await this._getBestDomainPattern(domain);
+    if (knownPattern) {
+      const idx = orderedCandidates.findIndex(c => c.pattern === knownPattern);
+      if (idx > 0) {
+        const [winner] = orderedCandidates.splice(idx, 1);
+        orderedCandidates.unshift(winner);
+      }
+    }
+    const maxPatterns = config.webhookValidation.maxWaterfallPatterns || 10;
+    if (orderedCandidates.length > maxPatterns) {
+      orderedCandidates = orderedCandidates.slice(0, maxPatterns);
+    }
+
     // Store full waterfall candidate list in Redis for cluster-wide escalation
     await this._savePersonWaterfallState(id, {
       personId: id,
@@ -535,12 +586,12 @@ export class PipelineManager {
       companyName: companyName || '',
       website,
       domain,
-      missingCandidates: missingCacheCandidates,
+      missingCandidates: orderedCandidates,
       currentIndex: 0
     });
 
-    const firstCandidate = missingCacheCandidates[0];
-    console.log(`[Waterfall:${this.serverId}] Person ${id} (${firstName} ${lastName}): Triggering Pattern 1/${missingCacheCandidates.length} -> ${firstCandidate.email}`);
+    const firstCandidate = orderedCandidates[0];
+    console.log(`[Waterfall:${this.serverId}] Person ${id} (${firstName} ${lastName}): Triggering Pattern 1/${orderedCandidates.length} -> ${firstCandidate.email}`);
     this.metrics.webhookSubmitted++;
     if (this.redisClient && !this.useMemoryQueue) {
       this.redisClient.hincrby('cluster:metrics', 'webhookSubmitted', 1).catch(() => {});
@@ -696,6 +747,7 @@ export class PipelineManager {
           createdAt: Date.now()
         });
         this.metrics.webhookValidReceived++;
+        this._saveBestDomainPattern(context.domain, context.pattern).catch(() => {});
         if (this.redisClient && !this.useMemoryQueue) {
           this.redisClient.hincrby('cluster:metrics', 'webhookValidReceived', 1).catch(() => {});
           this.redisClient.hincrby('cluster:metrics', 'totalValid', 1).catch(() => {});
