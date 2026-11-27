@@ -49,8 +49,8 @@ export class V6WaterfallRunner {
       targetRps: this.cfg.v6.targetRps,
       timeoutMs: this.cfg.v6.timeoutMs,
       maxRetries: this.cfg.v6.maxRetries,
-      onRetry: (email, attempt, msg) => {
-        this.errorLogger.log('V6_RETRY', msg, { email, attempt });
+      onRetry: () => {
+        // Counted in v6Client.retryCount; only permanent failures increment errorLogger.errorCount
       },
       onError: (tag, msg, meta) => {
         this.errorLogger.log(tag, msg, meta);

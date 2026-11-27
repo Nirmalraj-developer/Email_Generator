@@ -20,8 +20,8 @@ export class V6Client {
     this.retryCount = 0;
     this.failedCount = 0;
 
-    // 100ms sliding window rate limiter for smooth 3,000 req/s pacing
-    this.windowMs = 100;
+    // 25ms sliding window rate limiter for smooth 3,000 req/s pacing without cold-start SYN bursts
+    this.windowMs = 25;
     this.maxPerWindow = Math.max(1, Math.ceil((targetRps * this.windowMs) / 1000));
     this.windowStart = Date.now();
     this.windowCount = 0;
