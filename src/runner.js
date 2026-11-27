@@ -280,6 +280,26 @@ export class V6WaterfallRunner {
         `Retries: ${this.v6Client.retryCount} | ` +
         `Err: ${this.errorLogger.errorCount}`
       );
+
+      const statsFile = path.join(this.cfg.output.baseDir, 'live_stats.json');
+      const snapshot = {
+        updatedAt: new Date().toISOString(),
+        serverId: this.cfg.serverId,
+        targetRps: this.cfg.v6.targetRps,
+        sendRate,
+        webhookInRate: inRate,
+        activeSends: this.activeSends,
+        inFlight: this.inFlightByTracking.size,
+        escalationsQ: this.escalationQueue.length,
+        loadedContacts: this.stats.loadedContacts,
+        skippedCompleted: this.stats.skippedCompleted,
+        validCount: this.stats.validCount,
+        invalidCount: this.stats.invalidCount,
+        triggersWritten: this.stats.triggersWritten,
+        retries: this.v6Client.retryCount,
+        errors: this.errorLogger.errorCount
+      };
+      fs.writeFile(statsFile, JSON.stringify(snapshot, null, 2), () => {});
     }, this.cfg.statsIntervalMs);
   }
 
