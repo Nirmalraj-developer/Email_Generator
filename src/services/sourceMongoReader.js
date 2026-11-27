@@ -218,7 +218,7 @@ export class SourceMongoReader {
         }
       })
       .sort({ _id: 1 })
-      .batchSize(2000);
+      .batchSize(5000);
 
     let buffer = [];
     let rawScanned = 0;

@@ -89,7 +89,7 @@ export class AppController {
       try {
         const remaining = maxRecords - totalIngested;
         await this.sourceReader.streamContacts(lastId, {
-          chunkSize: 1000,
+          chunkSize: 2000,
           maxRecords: remaining,
           shouldStop: () => !this.isRunning || this.stopRequested,
           onChunk: async ({ records, lastId: chunkLastId, rawScanned }) => {
@@ -109,13 +109,13 @@ export class AppController {
               console.log(`[Master:Stream] Pushed +${records.length}/${rawScanned} valid-website contacts | Total Queued: ${totalIngested.toLocaleString()} | Last ID: ${lastId}`);
             }
 
-            // Save progress checkpoint every chunk
-            if (lastId) {
-              await this.checkpointCol.updateOne(
+            // Save progress checkpoint every 5 chunks (~10,000 contacts) without blocking every chunk
+            if (lastId && chunkCounter % 5 === 0) {
+              this.checkpointCol.updateOne(
                 { key: CHECKPOINT_KEY },
                 { $set: { key: CHECKPOINT_KEY, lastId, totalIngested, updatedAt: new Date() } },
                 { upsert: true }
-              );
+              ).catch(() => {});
             }
 
             // Backpressure: keep up to 100,000 jobs stocked in Redis, pause only if buffer exceeds 100K
