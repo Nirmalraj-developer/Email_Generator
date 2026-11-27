@@ -79,72 +79,70 @@ export class AppController {
       }
     }
 
-    console.log('[Master] Ingesting from MongoDB and distributing to cluster workers...');
-    let batchCounter = 0;
-    const MAX_READ_RETRIES = 5;
+    console.log('[Master] Streaming continuously from MongoDB to keep cluster queue stocked...');
+    let chunkCounter = 0;
+    let consecutiveErrors = 0;
+    const MAX_STREAM_RETRIES = 10;
+    const QUEUE_HIGH_WATERMARK = 100000;
 
     while (this.isRunning && !this.stopRequested && totalIngested < maxRecords) {
       try {
-        // High-Throughput Backpressure check: Check queue backlog every 5 batches (Threshold: 100,000 for 251GB RAM cluster)
-        if (batchCounter % 5 === 0) {
-          const qStatus = await this.pipeline.getStatus();
-          if (qStatus.queueStatus.waiting > 100000) {
-            console.log(`[Master:Backpressure] Queue buffer full (${qStatus.queueStatus.waiting.toLocaleString()} waiting). Pausing ingestion for 2s...`);
-            await new Promise(r => setTimeout(r, 2000));
-            continue;
-          }
-        }
-        batchCounter++;
-
-        // Batch read with transient error retry
-        let batch = null;
-        let readAttempts = 0;
         const remaining = maxRecords - totalIngested;
-        const currentBatchLimit = Math.min(this.sourceReader.batchSize, remaining);
+        await this.sourceReader.streamContacts(lastId, {
+          chunkSize: 1000,
+          maxRecords: remaining,
+          shouldStop: () => !this.isRunning || this.stopRequested,
+          onChunk: async ({ records, lastId: chunkLastId, rawScanned }) => {
+            consecutiveErrors = 0;
 
-        while (readAttempts < MAX_READ_RETRIES && !batch) {
-          try {
-            batch = await this.sourceReader.fetchBatch(lastId, currentBatchLimit);
-          } catch (readErr) {
-            readAttempts++;
-            console.warn(`[Master] Transient MongoDB read error (attempt ${readAttempts}/${MAX_READ_RETRIES}): ${readErr.message}`);
-            if (readAttempts >= MAX_READ_RETRIES) throw readErr;
-            await new Promise(r => setTimeout(r, 2000));
+            if (records.length > 0) {
+              await this.pipeline.enqueueContacts(records);
+              totalIngested += records.length;
+            }
+
+            if (chunkLastId) {
+              lastId = chunkLastId;
+            }
+
+            chunkCounter++;
+            if (records.length > 0 || chunkCounter % 5 === 0) {
+              console.log(`[Master:Stream] Pushed +${records.length}/${rawScanned} valid-website contacts | Total Queued: ${totalIngested.toLocaleString()} | Last ID: ${lastId}`);
+            }
+
+            // Save progress checkpoint every chunk
+            if (lastId) {
+              await this.checkpointCol.updateOne(
+                { key: CHECKPOINT_KEY },
+                { $set: { key: CHECKPOINT_KEY, lastId, totalIngested, updatedAt: new Date() } },
+                { upsert: true }
+              );
+            }
+
+            // Backpressure: keep up to 100,000 jobs stocked in Redis, pause only if buffer exceeds 100K
+            if (chunkCounter % 5 === 0) {
+              let qStatus = await this.pipeline.getStatus();
+              while (qStatus.queueStatus.waiting > QUEUE_HIGH_WATERMARK && this.isRunning && !this.stopRequested) {
+                console.log(`[Master:StockFull] Queue stocked (${qStatus.queueStatus.waiting.toLocaleString()} waiting). Pausing 2s...`);
+                await new Promise(r => setTimeout(r, 2000));
+                qStatus = await this.pipeline.getStatus();
+              }
+            }
           }
-        }
+        });
 
-        if (batch.batchSize === 0) {
-          console.log('[Master] Reached end of matching people collection.');
+        // Stream completed cleanly (reached end of collection or maxRecords)
+        if (!this.stopRequested) {
+          console.log('[Master] Reached end of matching people collection or limit.');
+        }
+        break;
+      } catch (err) {
+        consecutiveErrors++;
+        console.warn(`[Master] Transient stream error (attempt ${consecutiveErrors}/${MAX_STREAM_RETRIES}): ${err.message}`);
+        if (consecutiveErrors >= MAX_STREAM_RETRIES) {
+          console.error('[Master] Fatal error streaming MongoDB after retries:', err.message);
           break;
         }
-
-        // Push to cluster queue (skip empty filtered batches while still advancing lastId cursor)
-        if (batch.records && batch.records.length > 0) {
-          await this.pipeline.enqueueContacts(batch.records);
-          totalIngested += batch.records.length;
-        }
-
-        lastId = batch.nextLastId;
-
-        // Display live progress in terminal
-        console.log(`[Master:Stream] Ingested ${batch.records.length}/${batch.batchSize} valid-website contacts | Total Queued: ${totalIngested.toLocaleString()} | Last ID: ${lastId}`);
-
-        // Save progress checkpoint
-        await this.checkpointCol.updateOne(
-          { key: CHECKPOINT_KEY },
-          { $set: { key: CHECKPOINT_KEY, lastId, totalIngested, updatedAt: new Date() } },
-          { upsert: true }
-        );
-
-        // Throttle pacing if specified
-        if (config.sourceMongo.batchDelayMs > 0) {
-          await new Promise(r => setTimeout(r, config.sourceMongo.batchDelayMs));
-        }
-
-        if (!lastId) break;
-      } catch (err) {
-        console.error('[Master] Fatal error reading MongoDB batch after retries:', err.message);
-        break;
+        await new Promise(r => setTimeout(r, 2000));
       }
     }
 
