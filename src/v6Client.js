@@ -32,7 +32,7 @@ export class V6Client {
       httpsAgent: new https.Agent({ keepAlive: true, maxSockets: 4096, maxFreeSockets: 512 }),
       headers: {
         'Content-Type': 'application/json',
-        ...(apiToken ? { Authorization: `Bearer ${apiToken}`, 'x-api-key': apiToken } : {})
+        ...(apiToken ? { apitoken: apiToken } : {})
       }
     });
   }
@@ -61,9 +61,7 @@ export class V6Client {
       try {
         const res = await this.client.post(this.url, {
           email,
-          callback_url: this.callbackUrl,
-          webhook_url: this.callbackUrl,
-          tracking_id: trackingId
+          webhookUrl: this.callbackUrl
         });
         this.sentCount++;
         const data = res.data || {};

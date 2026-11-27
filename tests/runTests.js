@@ -72,19 +72,20 @@ async function runTests() {
     req.on('end', () => {
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ trackingId: body.tracking_id }));
+      const trackingId = `wh_mock_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      res.end(JSON.stringify({ success: true, trackingId }));
 
       // Simulate async Verify V6 webhook callback
       setTimeout(() => {
         const isValid = body.email === 'p2.valid@test.com';
         const cbData = JSON.stringify({
-          trackingId: body.tracking_id,
+          trackingId,
           email: body.email,
           deliverable: isValid,
           score: isValid ? 99 : 0,
           reason: isValid ? 'deliverable' : 'undeliverable'
         });
-        const cbReq = http.request(body.callback_url, {
+        const cbReq = http.request(body.webhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(cbData) }
         });
